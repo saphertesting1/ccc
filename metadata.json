@@ -1,0 +1,6 @@
+{
+  "name": "Chandu Chicken Center",
+  "description": "Production-ready online fresh chicken ordering platform and mobile app for Chandu Chicken Center with guest checkout, order tracking, and shop admin management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
