@@ -5,7 +5,6 @@ import {
   Search, 
   Clock, 
   ShieldCheck, 
-  Lock, 
   Home, 
   UtensilsCrossed, 
   ClipboardList,
@@ -13,12 +12,10 @@ import {
 } from 'lucide-react';
 import { useCart } from '../context/CartContext.js';
 import { useShop } from '../context/ShopContext.js';
-import { useAdminAuth } from '../context/AdminAuthContext.js';
 
 export default function Navbar() {
   const { totalItemsCount, openCartDrawer } = useCart();
   const { settings } = useShop();
-  const { isAuthenticated } = useAdminAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,14 +65,6 @@ export default function Navbar() {
             <span className="text-amber-300 font-medium hidden sm:inline">
               ⚡ 100% Farm Fresh Tender Chicken Cleaned to Order
             </span>
-            {/* Admin Login link in top bar */}
-            <Link
-              to={isAuthenticated ? '/admin/dashboard' : '/admin/login'}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#D92332]/20 hover:bg-[#D92332] text-white hover:text-white font-semibold transition-colors border border-[#D92332]/50"
-            >
-              <Lock className="w-3 h-3 text-red-400" />
-              <span>{isAuthenticated ? 'Admin Panel' : 'Admin Login'}</span>
-            </Link>
           </div>
         </div>
       </div>
@@ -154,16 +143,6 @@ export default function Navbar() {
                 Account
               </Link>
             </nav>
-
-            {/* Admin Login Button on Desktop */}
-            <Link
-              to={isAuthenticated ? '/admin/dashboard' : '/admin/login'}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-[#38251F] bg-stone-100 hover:bg-stone-200 border border-stone-300 transition-colors shadow-2xs"
-              title="Shop Manager & Admin Portal"
-            >
-              <Lock className="w-3.5 h-3.5 text-[#D92332]" />
-              <span>{isAuthenticated ? 'Admin Dashboard' : 'Admin Login'}</span>
-            </Link>
 
             {/* Cart Button */}
             <button

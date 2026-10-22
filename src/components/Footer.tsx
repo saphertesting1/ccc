@@ -1,11 +1,9 @@
 import { Link } from 'react-router-dom';
 import { Phone, MessageCircle, MapPin, Clock, ShieldCheck, Lock, Truck } from 'lucide-react';
 import { useShop } from '../context/ShopContext.js';
-import { useAdminAuth } from '../context/AdminAuthContext.js';
 
 export default function Footer() {
   const { settings } = useShop();
-  const { isAuthenticated } = useAdminAuth();
 
   return (
     <footer className="bg-[#38251F] text-stone-300 pt-14 pb-20 md:pb-12 border-t-4 border-[#D92332]">
@@ -98,11 +96,11 @@ export default function Footer() {
               Authorized butcher and shop managers can manage live stock, update prices, and process incoming orders.
             </p>
             <Link
-              to={isAuthenticated ? '/admin/dashboard' : '/admin/login'}
+              to="/admin/login"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#D92332] hover:bg-[#b81d2a] text-white text-xs font-bold transition-all shadow-md active:scale-95"
             >
               <Lock className="w-4 h-4" />
-              <span>{isAuthenticated ? 'Open Admin Dashboard' : 'Admin Login Portal'}</span>
+              <span>Admin Portal Login</span>
             </Link>
           </div>
         </div>
@@ -113,10 +111,6 @@ export default function Footer() {
             <Link to="/products" className="hover:text-stone-300">Fresh Chicken</Link>
             <span>•</span>
             <Link to="/track-order" className="hover:text-stone-300">Track Order</Link>
-            <span>•</span>
-            <Link to="/admin/login" className="hover:text-stone-300 text-stone-400 flex items-center gap-1">
-              <Lock className="w-3 h-3 text-[#D92332]" /> Admin
-            </Link>
           </div>
         </div>
       </div>

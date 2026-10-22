@@ -60,12 +60,13 @@ export default function AdminLoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-stone-700 mb-1">
-                Admin Username
+                Admin Email or Username
               </label>
               <div className="relative">
                 <input
                   type="text"
                   required
+                  placeholder="e.g. admin@gmail.com or admin"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs sm:text-sm text-[#38251F] focus:outline-hidden focus:border-[#D92332]"
@@ -82,6 +83,7 @@ export default function AdminLoginPage() {
                 <input
                   type="password"
                   required
+                  placeholder="Enter security password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs sm:text-sm text-[#38251F] focus:outline-hidden focus:border-[#D92332]"
@@ -105,13 +107,13 @@ export default function AdminLoginPage() {
           <div className="bg-amber-50 p-3.5 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-1">
             <div className="flex items-center gap-1.5 font-bold">
               <ShieldCheck className="w-4 h-4 text-amber-700" />
-              <span>Default Shop Manager Credentials</span>
+              <span>Shop Manager Credentials</span>
             </div>
             <p className="text-[11px] text-amber-800">
-              Username: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">admin</code> • Password: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">chandu@123</code>
+              Supabase Auth: Use the email you created under <strong>Authentication &rarr; Users</strong> in Supabase.
             </p>
-            <p className="text-[10px] text-stone-500 mt-1">
-              Public registration is disabled by design. All admin actions are protected by server-side authorization tokens.
+            <p className="text-[11px] text-amber-800">
+              Default Credentials: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">admin</code> • Password: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">chandu@123</code>
             </p>
           </div>
 
