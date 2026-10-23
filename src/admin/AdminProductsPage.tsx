@@ -383,7 +383,14 @@ export default function AdminProductsPage() {
                           className="w-12 h-12 rounded-xl object-cover bg-stone-100 shrink-0 border border-stone-200"
                         />
                         <div>
-                          <div className="font-bold text-[#38251F] text-sm">{p.name}</div>
+                          <div className="font-bold text-[#38251F] text-sm flex items-center gap-1.5">
+                            <span>{p.name}</span>
+                            {p.isFeatured && (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200 shrink-0" title="Featured on Homepage">
+                                Home
+                              </span>
+                            )}
+                          </div>
                           {p.badge && (
                             <span className="text-[10px] font-bold text-[#D92332] bg-red-50 px-1.5 py-0.5 rounded">
                               {p.badge}
@@ -622,6 +629,31 @@ export default function AdminProductsPage() {
                       <span>Deactivated</span>
                     </>
                   )}
+                </button>
+              </div>
+
+              {/* 6. Feature on Homepage Toggle */}
+              <div className="bg-white p-4 rounded-2xl border border-stone-200 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-stone-800">Feature on Homepage</div>
+                  <div className="text-[11px] text-stone-500">
+                    {editingProduct.isFeatured
+                      ? 'Featured: Displayed on the homepage "Today\'s Fresh Cuts" showcase.'
+                      : 'Standard: Displayed in the full product catalog only.'}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setEditingProduct({ ...editingProduct, isFeatured: !editingProduct.isFeatured })}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                    editingProduct.isFeatured
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-stone-100 text-stone-600 border border-stone-200 hover:bg-stone-200'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>{editingProduct.isFeatured ? 'Featured on Home' : 'Standard Catalog'}</span>
                 </button>
               </div>
 

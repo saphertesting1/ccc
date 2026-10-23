@@ -160,7 +160,70 @@ async function runTestSuite() {
   assert(!isBelowMinRestored, 'An order of ₹65 must be allowed when minOrderAmount is set to 0');
   console.log('  ✅ Zero-threshold and dynamic minimum order amount validation verified.');
 
-  console.log('\n🎉 ALL 8 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
+  // Test 9: Catalog Count & Featured Cuts Mismatch Check (Issue 2)
+  console.log('\n▶ Test 9: Full Catalog Count vs Featured Homepage Cuts');
+  const allProds = await repo.getProducts();
+  assert.strictEqual(allProds.length, 9, 'Full catalog must contain exactly 9 products');
+
+  const featured = allProds.filter(p => p.isFeatured && p.isAvailable);
+  assert.strictEqual(featured.length, 5, 'Exactly 5 products are marked featured initially');
+  
+  // Verify toggling a product to featured increases featured count to 6
+  const lollipops = allProds.find(p => p.id === 'prod-lollipops');
+  assert(lollipops, 'Chicken lollipop must exist');
+  assert.strictEqual(lollipops.isFeatured, false, 'Lollipops is not featured initially');
+  
+  await repo.saveProduct({ ...lollipops, isFeatured: true });
+  const updatedProds = await repo.getProducts();
+  const updatedFeatured = updatedProds.filter(p => p.isFeatured && p.isAvailable);
+  assert.strictEqual(updatedFeatured.length, 6, 'Homepage featured cuts dynamically increases to 6 after toggle');
+  
+  // Revert back to 5 for clean state
+  await repo.saveProduct({ ...lollipops, isFeatured: false });
+  console.log('  ✅ 9 full products and dynamic featured filtering verified.');
+
+  // Test 10: Admin Product Add, Update & Delete with Historical Orders Preserved (Issue 1)
+  console.log('\n▶ Test 10: Admin Product Add, Update, and Delete Lifecycle with Order Safety');
+  const testNewProd = {
+    id: 'prod-test-tangdi',
+    name: 'Special Tandoori Leg (Test Cut)',
+    slug: 'special-tandoori-leg-test-cut',
+    categoryId: 'cat-appetizers',
+    description: 'Marinated tender leg cut for test',
+    imageUrl: 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=600&q=80',
+    weights: [
+      { weight: '500g' as const, price: 160, inStock: true },
+      { weight: '1kg' as const, price: 310, inStock: true }
+    ],
+    cutOptions: ['Deep Slits for Tandoor'],
+    isAvailable: true,
+    isFeatured: true,
+    badge: 'New Item',
+    netWeightDescription: 'Fresh test cut'
+  };
+
+  // Add Product
+  await repo.saveProduct(testNewProd);
+  const prodsAfterAdd = await repo.getProducts();
+  assert.strictEqual(prodsAfterAdd.length, 10, 'Catalog should now have 10 products after adding');
+  const added = await repo.getProductById('prod-test-tangdi');
+  assert(added && added.name === 'Special Tandoori Leg (Test Cut)', 'Added product must be retrievable');
+
+  // Delete Product
+  const deleted = await repo.deleteProduct('prod-test-tangdi');
+  assert(deleted === true, 'Delete operation must succeed');
+  const prodsAfterDelete = await repo.getProducts();
+  assert.strictEqual(prodsAfterDelete.length, 9, 'Catalog should return to 9 products after deletion');
+  const notFound = await repo.getProductById('prod-test-tangdi');
+  assert(notFound === null, 'Deleted product must no longer exist in catalog');
+
+  // Confirm historical order placed in Test 3 remains completely untouched
+  const historicalOrder = await repo.getOrderById(order.id);
+  assert(historicalOrder !== null, 'Past order must remain intact after product operations');
+  assert.strictEqual(historicalOrder.items.length, 1, 'Historical order item snapshot must be intact');
+  console.log('  ✅ Product CRUD and historical order immutability verified.');
+
+  console.log('\n🎉 ALL 10 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
 }
 
 runTestSuite().catch(err => {

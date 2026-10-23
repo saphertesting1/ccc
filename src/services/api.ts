@@ -935,6 +935,9 @@ export const api = {
       const { data, error } = await supabase.from('products').upsert([dbRow]).select().single();
       if (error) {
         console.error('[Supabase] Failed to save product:', error);
+        if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
+          throw new Error('Supabase table "public.products" was not found in the schema cache. Please execute the complete supabase-setup.sql script in your Supabase SQL Editor to initialize the database tables and reload the schema cache.');
+        }
         throw new Error(`Database error saving product: ${error.message}`);
       }
 
@@ -987,6 +990,9 @@ export const api = {
       const { error } = await supabase.from('products').delete().eq('id', productId);
       if (error) {
         console.error('[Supabase] Failed to delete product:', error);
+        if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
+          throw new Error('Supabase table "public.products" was not found in the schema cache. Please execute the complete supabase-setup.sql script in your Supabase SQL Editor to initialize the database tables and reload the schema cache.');
+        }
         throw new Error(`Failed to delete product from database: ${error.message}`);
       }
 
@@ -1009,7 +1015,12 @@ export const api = {
         .from('products')
         .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
         .eq('id', productId);
-      if (error) throw new Error(error.message);
+      if (error) {
+        if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
+          throw new Error('Supabase table "public.products" was not found in the schema cache. Please run supabase-setup.sql in Supabase SQL Editor.');
+        }
+        throw new Error(error.message);
+      }
       notifyShopDataChanged();
       return;
     }

@@ -123,9 +123,14 @@ export default function HomePage() {
               <Flame className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xl sm:text-2xl font-black text-[#38251F]">
-                Today's Fresh Cuts
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl sm:text-2xl font-black text-[#38251F]">
+                  Today's Fresh Cuts
+                </h2>
+                <span className="text-[11px] font-bold px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-200 rounded-full">
+                  Featured ({featuredProducts.length > 0 ? featuredProducts.length : products.length})
+                </span>
+              </div>
               <p className="text-xs text-stone-500">Choose weight (250g, 500g, 1kg) and butcher cut style</p>
             </div>
           </div>
@@ -133,7 +138,7 @@ export default function HomePage() {
             to="/products"
             className="text-xs font-bold text-[#D92332] hover:underline flex items-center gap-1"
           >
-            All Products <ArrowRight className="w-3.5 h-3.5" />
+            <span>All Products ({products.length})</span> <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
@@ -144,10 +149,23 @@ export default function HomePage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {(featuredProducts.length > 0 ? featuredProducts : products).slice(0, 6).map(prod => (
-              <ProductCard key={prod.id} product={prod} />
-            ))}
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {(featuredProducts.length > 0 ? featuredProducts : products).map(prod => (
+                <ProductCard key={prod.id} product={prod} />
+              ))}
+            </div>
+
+            {/* Clear View All CTA beneath the grid */}
+            <div className="text-center pt-2">
+              <Link
+                to="/products"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-white hover:bg-stone-50 text-[#D92332] font-bold text-xs sm:text-sm rounded-xl border border-stone-200 shadow-xs hover:border-[#D92332] transition-all"
+              >
+                <span>View Full Menu ({products.length} Fresh Cuts & Products)</span>
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
           </div>
         )}
       </section>

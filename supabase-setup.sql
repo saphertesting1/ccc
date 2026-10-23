@@ -226,20 +226,86 @@ CREATE POLICY "Admins can update orders"
     WITH CHECK (true);
 
 -- =========================================================================
--- INITIAL SEED DATA FOR CATEGORIES & POPULAR CUTS
+-- INITIAL SEED DATA FOR CATEGORIES & COMPLETE 9 PRODUCTS CATALOG
 -- =========================================================================
+-- Ensure weights column exists if table was created earlier without it
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS weights JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- All 6 categories
 INSERT INTO public.categories (id, name, slug, description, image_url, display_order)
 VALUES
     ('cat-fresh-cuts', 'Fresh Chicken Cuts', 'fresh-chicken-cuts', 'Daily fresh tender chicken cleaned with RO water', 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=600&q=80', 1),
     ('cat-specialty', 'Biryani & Curry Cuts', 'biryani-curry-cuts', 'Curated bone-in & boneless pieces for Biryani & gravies', 'https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=600&q=80', 2),
     ('cat-boneless', 'Boneless & Fillets', 'boneless-fillets', 'Lean high-protein chicken breast and thigh fillets', 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=600&q=80', 3),
-    ('cat-appetizers', 'Drumsticks & Wings', 'drumsticks-wings', 'Juicy chicken drumsticks and lollipop cuts', 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=600&q=80', 4)
-ON CONFLICT (id) DO NOTHING;
+    ('cat-appetizers', 'Drumsticks & Wings', 'drumsticks-wings', 'Juicy chicken drumsticks and lollipop cuts', 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=600&q=80', 4),
+    ('cat-country', 'Country Chicken (Natukodi)', 'country-chicken-natukodi', 'Authentic free-range desi country chicken with rustic flavor', 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&w=600&q=80', 5),
+    ('cat-eggs', 'Farm Fresh Eggs', 'farm-fresh-eggs', 'Nutrient-rich, farm-laid white & country brown table eggs', 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?auto=format&fit=crop&w=600&q=80', 6)
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    image_url = EXCLUDED.image_url,
+    display_order = EXCLUDED.display_order;
 
+-- All 9 Products
 INSERT INTO public.products (id, category_id, name, slug, description, image_url, cut_options, weights, is_available, is_featured, badge, net_weight_description)
 VALUES
-    ('prod-curry-cut', 'cat-fresh-cuts', 'Fresh Chicken Curry Cut (Skinless)', 'fresh-chicken-curry-cut-skinless', 'Standard curry pieces (12-16 pcs/kg) carved from tender farm-fresh broiler chicken.', 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80', '["Standard Curry Cut (12-16 pcs/kg)", "Small Curry Cut (18-22 pcs/kg)", "Large Pieces (8-10 pcs/kg)"]'::jsonb, '[{"weight":"250g","price":65,"inStock":true},{"weight":"500g","price":125,"inStock":true},{"weight":"1kg","price":240,"inStock":true}]'::jsonb, true, true, 'Bestseller', 'Net weight after plucking and cleaning.'),
-    ('prod-biryani-cut', 'cat-specialty', 'Chicken Biryani Cut (Large Juicy Pieces)', 'chicken-biryani-cut-large-juicy-pieces', 'Expertly sized 8-10 large succulent pieces per kg, ideal for slow-dum Hyderabadi biryani.', 'https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=800&q=80', '["Classic Dum Biryani Cut (8-10 pcs/kg)", "Biryani Leg & Thigh Cut", "Medium Biryani Cut"]'::jsonb, '[{"weight":"500g","price":135,"inStock":true},{"weight":"1kg","price":260,"inStock":true}]'::jsonb, true, true, 'Chef Choice', 'Even-sized cuts for uniform marination.'),
-    ('prod-boneless-breast', 'cat-boneless', 'Tender Chicken Boneless Breast Fillets', 'tender-chicken-boneless-breast-fillets', '100% whole muscle chicken breast trimmed of all connective tissue and skin. Ultra-high protein.', 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=800&q=80', '["Whole Fillets", "Thin Slices / Steaks", "Boneless Cubes / Tikka Cut", "Minced / Keema"]'::jsonb, '[{"weight":"250g","price":90,"inStock":true},{"weight":"500g","price":175,"inStock":true},{"weight":"1kg","price":340,"inStock":true}]'::jsonb, true, true, 'High Protein', 'Zero bone wastage, 100% net meat.'),
-    ('prod-drumsticks', 'cat-appetizers', 'Juicy Chicken Drumsticks (Tangdi)', 'juicy-chicken-drumsticks-tangdi', 'Skinless plump chicken drumsticks. Perfect for tandoori, deep frying, and rich Mughlai gravies.', 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=800&q=80', '["Plain Skinless", "Deep Slit Cuts for Marinade (Tangdi)", "With Skin"]'::jsonb, '[{"weight":"500g","price":150,"inStock":true},{"weight":"1kg","price":290,"inStock":true}]'::jsonb, true, false, 'Party Favorite', 'Approx 4-5 drumsticks per 500g.')
-ON CONFLICT (id) DO NOTHING;
+    ('prod-curry-cut', 'cat-fresh-cuts', 'Fresh Chicken Curry Cut (Skinless)', 'fresh-chicken-curry-cut-skinless', 'Tender, juicy bone-in pieces crafted from farm-raised young chicken. Includes mix of drumstick, thigh, breast and back pieces ideal for Indian curries and gravies. 100% halal cleaned with RO water.', 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80', '["Standard Curry Cut (12-16 pcs/kg)", "Small Bites (South Indian Gravy Cut)", "Skin-On Traditional Cut"]'::jsonb, '[{"weight":"250g","price":65,"inStock":true},{"weight":"500g","price":125,"inStock":true},{"weight":"1kg","price":240,"inStock":true}]'::jsonb, true, true, 'Bestseller', 'Cleaned net weight. Exact weight as billed.'),
+    ('prod-biryani-cut', 'cat-specialty', 'Chicken Biryani Cut (Large Juicy Pieces)', 'chicken-biryani-cut-large-juicy-pieces', 'Specially handpicked larger succulent cuts with bone that absorb biryani masalas deep into the marrow while retaining moisture during slow Dum cooking.', 'https://images.unsplash.com/photo-1587593810167-a84920ea0781?auto=format&fit=crop&w=800&q=80', '["Classic Dum Biryani Cut (8-10 pcs/kg)", "Medium Biryani Cut"]'::jsonb, '[{"weight":"500g","price":135,"inStock":true},{"weight":"1kg","price":260,"inStock":true}]'::jsonb, true, true, 'Biryani Special', 'Premium large pieces with bone.'),
+    ('prod-boneless-breast', 'cat-boneless', 'Tender Chicken Boneless Breast', 'tender-chicken-boneless-breast', 'High-protein, ultra-clean breast fillets trimmed of all excess fat and skin. Perfect for fitness enthusiasts, chicken tikka, stir-fries, and butter chicken.', 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=800&q=80', '["Whole Breast Fillets", "Bite-Sized Cubes (Tikka Cut)", "Thin Strips"]'::jsonb, '[{"weight":"250g","price":95,"inStock":true},{"weight":"500g","price":180,"inStock":true},{"weight":"1kg","price":350,"inStock":true}]'::jsonb, true, true, 'High Protein', '100% boneless, zero wastage.'),
+    ('prod-drumsticks', 'cat-appetizers', 'Juicy Chicken Drumsticks (Legs)', 'juicy-chicken-drumsticks-legs', 'Skinless tender chicken drumsticks with bone, carved for quick marination and rich roasting, tandoori grills, or rich Chettinad leg roast.', 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=800&q=80', '["Skinless with Deep Slits (Easy Marinate)", "Standard Whole Drumsticks"]'::jsonb, '[{"weight":"500g","price":165,"inStock":true},{"weight":"1kg","price":320,"inStock":true}]'::jsonb, true, true, 'Kids Favorite', 'Approx 4-5 pcs per 500g.'),
+    ('prod-lollipops', 'cat-appetizers', 'Chicken Lollipop (Frenched Winglets)', 'chicken-lollipop-frenched-winglets', 'Neatly frenched chicken wings shaped into lollipop drumettes with clean bone handle, ready for crispy Schezwan or spiced Indo-Chinese coating.', 'https://images.unsplash.com/photo-1527477396000-e27163b481c2?auto=format&fit=crop&w=800&q=80', '["Frenched Winglets (Ready to Batter)"]'::jsonb, '[{"weight":"250g","price":95,"inStock":true},{"weight":"500g","price":185,"inStock":true},{"weight":"1kg","price":360,"inStock":true}]'::jsonb, true, false, 'Party Starter', 'Clean trimmed bone tips.'),
+    ('prod-country-chicken', 'cat-country', 'Authentic Country Chicken / Natukodi', 'authentic-country-chicken-natukodi', 'Free-range country chicken raised in villages on natural grains. Offers intense, deeply savory flavor and firm texture prized for authentic Telugu Natukodi Pulusu.', 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&w=800&q=80', '["Skin-On Lightly Singed (Traditional Char)", "Skinless Country Cut"]'::jsonb, '[{"weight":"500g","price":235,"inStock":true},{"weight":"1kg","price":460,"inStock":true}]'::jsonb, true, true, 'Speciality Item', 'Free-range desi bird. Takes longer to cook.'),
+    ('prod-whole-chicken', 'cat-fresh-cuts', 'Whole Fresh Chicken (Skinless & Dressed)', 'whole-fresh-chicken-skinless-dressed', 'Full dressed tender young broiler chicken, gutted, neck removed, washed with RO water. Ready for whole roasting or custom butchering at home.', 'https://images.unsplash.com/photo-1588166524941-3bf61a9c41db?auto=format&fit=crop&w=800&q=80', '["Whole Dressed Bird", "Halved (2 halves)", "Quartered (4 pieces)"]'::jsonb, '[{"weight":"1kg","price":220,"inStock":true}]'::jsonb, true, false, 'Great Value', 'Net bird weight 1.0 kg - 1.1 kg.'),
+    ('prod-liver-gizzard', 'cat-fresh-cuts', 'Fresh Chicken Liver & Gizzard Mix', 'fresh-chicken-liver-gizzard-mix', 'Freshly cleaned nutrient-dense iron-rich chicken liver and firm gizzards, thoroughly washed and cleaned. Great for spicy dry roasts.', 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80', '["Cleaned Mix (Liver + Gizzard)", "Liver Only", "Gizzard Only"]'::jsonb, '[{"weight":"250g","price":60,"inStock":true},{"weight":"500g","price":110,"inStock":true}]'::jsonb, true, false, 'High Iron', 'Cleaned thoroughly with RO water.'),
+    ('prod-farm-eggs', 'cat-eggs', 'Farm Fresh White Table Eggs (Pack of 12)', 'farm-fresh-white-table-eggs-pack-12', 'Clean, unfertilized, graded white eggs from healthy hens fed a balanced grain diet. Packed in sturdy eco-friendly egg crates to prevent breakage during transit.', 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?auto=format&fit=crop&w=800&q=80', '["Pack of 12 Eggs", "Pack of 24 Eggs"]'::jsonb, '[{"weight":"500g","price":90,"inStock":true},{"weight":"1kg","price":170,"inStock":true}]'::jsonb, true, false, 'Daily Essential', 'Carefully cushioned packaging.')
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    category_id = EXCLUDED.category_id,
+    description = EXCLUDED.description,
+    image_url = EXCLUDED.image_url,
+    cut_options = EXCLUDED.cut_options,
+    weights = EXCLUDED.weights,
+    badge = EXCLUDED.badge,
+    net_weight_description = EXCLUDED.net_weight_description;
+
+-- Populate product_weights normalized table
+INSERT INTO public.product_weights (product_id, weight, price, in_stock)
+VALUES
+    ('prod-curry-cut', '250g', 65, true),
+    ('prod-curry-cut', '500g', 125, true),
+    ('prod-curry-cut', '1kg', 240, true),
+    ('prod-biryani-cut', '500g', 135, true),
+    ('prod-biryani-cut', '1kg', 260, true),
+    ('prod-boneless-breast', '250g', 95, true),
+    ('prod-boneless-breast', '500g', 180, true),
+    ('prod-boneless-breast', '1kg', 350, true),
+    ('prod-drumsticks', '500g', 165, true),
+    ('prod-drumsticks', '1kg', 320, true),
+    ('prod-lollipops', '250g', 95, true),
+    ('prod-lollipops', '500g', 185, true),
+    ('prod-lollipops', '1kg', 360, true),
+    ('prod-country-chicken', '500g', 235, true),
+    ('prod-country-chicken', '1kg', 460, true),
+    ('prod-whole-chicken', '1kg', 220, true),
+    ('prod-liver-gizzard', '250g', 60, true),
+    ('prod-liver-gizzard', '500g', 110, true),
+    ('prod-farm-eggs', '500g', 90, true),
+    ('prod-farm-eggs', '1kg', 170, true)
+ON CONFLICT (product_id, weight) DO UPDATE SET
+    price = EXCLUDED.price,
+    in_stock = EXCLUDED.in_stock;
+
+-- =========================================================================
+-- PERMISSIONS & ROLES GRANTS (CRITICAL for PostgREST Schema Cache recognition)
+-- =========================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT INSERT ON TABLE public.orders TO anon;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+-- =========================================================================
+-- RELOAD POSTGREST SCHEMA CACHE (Resolves "Could not find table in schema cache")
+-- =========================================================================
+NOTIFY pgrst, 'reload schema';
+
