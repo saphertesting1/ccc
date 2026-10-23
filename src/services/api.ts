@@ -429,25 +429,10 @@ export const api = {
           updated_at: newOrder.updatedAt
         };
 
-        const { data, error } = await supabase.from('orders').insert([dbPayload]).select().single();
-        if (!error && data) {
+        const { error } = await supabase.from('orders').insert([dbPayload]);
+        if (!error) {
           notifyShopDataChanged();
-          return {
-            id: data.id,
-            orderNumber: data.order_number || data.orderNumber,
-            customer: data.customer,
-            items: data.items,
-            subtotal: parseFloat(data.subtotal),
-            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
-            discount: parseFloat(data.discount || 0),
-            totalAmount: parseFloat(data.total_amount || data.totalAmount),
-            paymentMethod: data.payment_method || data.paymentMethod,
-            paymentStatus: data.payment_status || data.paymentStatus,
-            orderStatus: data.order_status || data.orderStatus,
-            statusHistory: data.status_history || data.statusHistory || [],
-            createdAt: data.created_at || data.createdAt,
-            updatedAt: data.updated_at || data.updatedAt
-          };
+          return newOrder;
         }
         if (error) {
           console.warn('[Supabase] Order insert error:', error.message);
@@ -484,6 +469,32 @@ export const api = {
 
     if (isSupabaseConfigured && supabase) {
       try {
+        // 1. First attempt secure RPC function (safe for public guest tracking without leaking other orders)
+        const { data: rpcRows, error: rpcError } = await supabase
+          .rpc('get_order_by_reference', { p_reference: decoded });
+
+        const rpcOrder = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+        if (!rpcError && rpcOrder) {
+          return {
+            id: rpcOrder.id || rpcOrder.order_number,
+            orderNumber: rpcOrder.order_number || rpcOrder.orderNumber,
+            customer: rpcOrder.customer || { name: '', phone: '', address: '', landmark: '' },
+            items: Array.isArray(rpcOrder.items) ? rpcOrder.items : [],
+            subtotal: rpcOrder.subtotal != null ? parseFloat(rpcOrder.subtotal) : 0,
+            deliveryFee: rpcOrder.delivery_fee != null ? parseFloat(rpcOrder.delivery_fee) : 0,
+            discount: rpcOrder.discount != null ? parseFloat(rpcOrder.discount) : 0,
+            totalAmount: rpcOrder.total_amount != null ? parseFloat(rpcOrder.total_amount) : 0,
+            paymentMethod: rpcOrder.payment_method || 'COD',
+            paymentStatus: rpcOrder.payment_status || 'Pending',
+            orderStatus: rpcOrder.order_status || 'New',
+            statusHistory: rpcOrder.status_history || [],
+            estimatedDeliveryTime: rpcOrder.estimated_delivery_time,
+            createdAt: rpcOrder.created_at || new Date().toISOString(),
+            updatedAt: rpcOrder.updated_at || new Date().toISOString()
+          };
+        }
+
+        // 2. Direct table query (for authenticated admins with full RLS access)
         const { data, error } = await supabase
           .from('orders')
           .select('*')
@@ -1187,6 +1198,30 @@ export const api = {
 
     if (isSupabaseConfigured && supabase) {
       try {
+        // 1. First attempt secure RPC (safe for customer phone lookups without full table read)
+        const { data: rpcOrders, error: rpcError } = await supabase
+          .rpc('get_customer_orders_by_phone', { p_phone: cleanPhone });
+
+        if (!rpcError && rpcOrders && Array.isArray(rpcOrders)) {
+          return rpcOrders.map(r => ({
+            id: r.id,
+            orderNumber: r.order_number || r.orderNumber,
+            customer: r.customer,
+            items: r.items,
+            subtotal: parseFloat(r.subtotal),
+            deliveryFee: parseFloat(r.delivery_fee || 0),
+            discount: parseFloat(r.discount || 0),
+            totalAmount: parseFloat(r.total_amount),
+            paymentMethod: r.payment_method,
+            paymentStatus: r.payment_status,
+            orderStatus: r.order_status,
+            statusHistory: r.status_history || [],
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+          }));
+        }
+
+        // 2. Direct table query (for authenticated admins)
         const { data, error } = await supabase
           .from('orders')
           .select('*')

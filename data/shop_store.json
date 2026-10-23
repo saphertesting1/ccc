@@ -210,7 +210,7 @@
       "isFeatured": false,
       "badge": "Party Starter",
       "netWeightDescription": "Clean trimmed bone tips.",
-      "updatedAt": "2026-10-23T12:53:35.321Z"
+      "updatedAt": "2026-10-23T14:10:38.812Z"
     },
     {
       "id": "prod-country-chicken",
@@ -327,6 +327,266 @@
     }
   ],
   "orders": [
+    {
+      "id": "ord-1792764638807-9631",
+      "orderNumber": "CCC-20261023-9631",
+      "idempotencyKey": "test-idem-1792764638806",
+      "customer": {
+        "name": "Anil Kumar",
+        "phone": "9848011223",
+        "address": "House 12-4, Market Road, Near Gandhi Statue",
+        "landmark": "Near Medical Hall",
+        "notes": ""
+      },
+      "items": [
+        {
+          "productId": "prod-curry-cut",
+          "productName": "Fresh Chicken Curry Cut (Skinless)",
+          "weight": "1kg",
+          "cutPreference": "Standard Curry Cut (12-16 pcs/kg)",
+          "unitPrice": 240,
+          "quantity": 2,
+          "subtotal": 480
+        }
+      ],
+      "subtotal": 480,
+      "deliveryFee": 30,
+      "discount": 0,
+      "totalAmount": 510,
+      "paymentMethod": "COD",
+      "paymentStatus": "Paid",
+      "orderStatus": "Delivered",
+      "statusHistory": [
+        {
+          "status": "New",
+          "timestamp": "2026-10-23T14:10:38.806Z",
+          "note": "Order placed by guest customer via online shop"
+        },
+        {
+          "status": "Accepted",
+          "timestamp": "2026-10-23T14:10:38.808Z",
+          "note": "Testing transition to Accepted"
+        },
+        {
+          "status": "Preparing",
+          "timestamp": "2026-10-23T14:10:38.808Z",
+          "note": "Testing transition to Preparing"
+        },
+        {
+          "status": "Ready for Dispatch",
+          "timestamp": "2026-10-23T14:10:38.809Z",
+          "note": "Testing transition to Ready for Dispatch"
+        },
+        {
+          "status": "Out for Delivery",
+          "timestamp": "2026-10-23T14:10:38.809Z",
+          "note": "Testing transition to Out for Delivery"
+        },
+        {
+          "status": "Delivered",
+          "timestamp": "2026-10-23T14:10:38.809Z",
+          "note": "Testing transition to Delivered"
+        }
+      ],
+      "createdAt": "2026-10-23T14:10:38.806Z",
+      "updatedAt": "2026-10-23T14:10:38.809Z",
+      "estimatedDeliveryTime": "45 mins"
+    },
+    {
+      "id": "ord-1792764058220-8676",
+      "orderNumber": "CCC-20261023-8676",
+      "idempotencyKey": "test-idem-1792764058219",
+      "customer": {
+        "name": "Anil Kumar",
+        "phone": "9848011223",
+        "address": "House 12-4, Market Road, Near Gandhi Statue",
+        "landmark": "Near Medical Hall",
+        "notes": ""
+      },
+      "items": [
+        {
+          "productId": "prod-curry-cut",
+          "productName": "Fresh Chicken Curry Cut (Skinless)",
+          "weight": "1kg",
+          "cutPreference": "Standard Curry Cut (12-16 pcs/kg)",
+          "unitPrice": 240,
+          "quantity": 2,
+          "subtotal": 480
+        }
+      ],
+      "subtotal": 480,
+      "deliveryFee": 30,
+      "discount": 0,
+      "totalAmount": 510,
+      "paymentMethod": "COD",
+      "paymentStatus": "Paid",
+      "orderStatus": "Delivered",
+      "statusHistory": [
+        {
+          "status": "New",
+          "timestamp": "2026-10-23T14:00:58.220Z",
+          "note": "Order placed by guest customer via online shop"
+        },
+        {
+          "status": "Accepted",
+          "timestamp": "2026-10-23T14:00:58.221Z",
+          "note": "Testing transition to Accepted"
+        },
+        {
+          "status": "Preparing",
+          "timestamp": "2026-10-23T14:00:58.222Z",
+          "note": "Testing transition to Preparing"
+        },
+        {
+          "status": "Ready for Dispatch",
+          "timestamp": "2026-10-23T14:00:58.222Z",
+          "note": "Testing transition to Ready for Dispatch"
+        },
+        {
+          "status": "Out for Delivery",
+          "timestamp": "2026-10-23T14:00:58.222Z",
+          "note": "Testing transition to Out for Delivery"
+        },
+        {
+          "status": "Delivered",
+          "timestamp": "2026-10-23T14:00:58.222Z",
+          "note": "Testing transition to Delivered"
+        }
+      ],
+      "createdAt": "2026-10-23T14:00:58.220Z",
+      "updatedAt": "2026-10-23T14:00:58.223Z",
+      "estimatedDeliveryTime": "45 mins"
+    },
+    {
+      "id": "ord-1792763685610-5629",
+      "orderNumber": "CCC-20261023-5629",
+      "idempotencyKey": "test-idem-1792763685610",
+      "customer": {
+        "name": "Anil Kumar",
+        "phone": "9848011223",
+        "address": "House 12-4, Market Road, Near Gandhi Statue",
+        "landmark": "Near Medical Hall",
+        "notes": ""
+      },
+      "items": [
+        {
+          "productId": "prod-curry-cut",
+          "productName": "Fresh Chicken Curry Cut (Skinless)",
+          "weight": "1kg",
+          "cutPreference": "Standard Curry Cut (12-16 pcs/kg)",
+          "unitPrice": 240,
+          "quantity": 2,
+          "subtotal": 480
+        }
+      ],
+      "subtotal": 480,
+      "deliveryFee": 30,
+      "discount": 0,
+      "totalAmount": 510,
+      "paymentMethod": "COD",
+      "paymentStatus": "Paid",
+      "orderStatus": "Delivered",
+      "statusHistory": [
+        {
+          "status": "New",
+          "timestamp": "2026-10-23T13:54:45.610Z",
+          "note": "Order placed by guest customer via online shop"
+        },
+        {
+          "status": "Accepted",
+          "timestamp": "2026-10-23T13:54:45.613Z",
+          "note": "Testing transition to Accepted"
+        },
+        {
+          "status": "Preparing",
+          "timestamp": "2026-10-23T13:54:45.613Z",
+          "note": "Testing transition to Preparing"
+        },
+        {
+          "status": "Ready for Dispatch",
+          "timestamp": "2026-10-23T13:54:45.614Z",
+          "note": "Testing transition to Ready for Dispatch"
+        },
+        {
+          "status": "Out for Delivery",
+          "timestamp": "2026-10-23T13:54:45.614Z",
+          "note": "Testing transition to Out for Delivery"
+        },
+        {
+          "status": "Delivered",
+          "timestamp": "2026-10-23T13:54:45.615Z",
+          "note": "Testing transition to Delivered"
+        }
+      ],
+      "createdAt": "2026-10-23T13:54:45.610Z",
+      "updatedAt": "2026-10-23T13:54:45.615Z",
+      "estimatedDeliveryTime": "45 mins"
+    },
+    {
+      "id": "ord-1792761490030-7748",
+      "orderNumber": "CCC-20261023-7748",
+      "idempotencyKey": "test-idem-1792761490029",
+      "customer": {
+        "name": "Anil Kumar",
+        "phone": "9848011223",
+        "address": "House 12-4, Market Road, Near Gandhi Statue",
+        "landmark": "Near Medical Hall",
+        "notes": ""
+      },
+      "items": [
+        {
+          "productId": "prod-curry-cut",
+          "productName": "Fresh Chicken Curry Cut (Skinless)",
+          "weight": "1kg",
+          "cutPreference": "Standard Curry Cut (12-16 pcs/kg)",
+          "unitPrice": 240,
+          "quantity": 2,
+          "subtotal": 480
+        }
+      ],
+      "subtotal": 480,
+      "deliveryFee": 30,
+      "discount": 0,
+      "totalAmount": 510,
+      "paymentMethod": "COD",
+      "paymentStatus": "Paid",
+      "orderStatus": "Delivered",
+      "statusHistory": [
+        {
+          "status": "New",
+          "timestamp": "2026-10-23T13:18:10.029Z",
+          "note": "Order placed by guest customer via online shop"
+        },
+        {
+          "status": "Accepted",
+          "timestamp": "2026-10-23T13:18:10.032Z",
+          "note": "Testing transition to Accepted"
+        },
+        {
+          "status": "Preparing",
+          "timestamp": "2026-10-23T13:18:10.032Z",
+          "note": "Testing transition to Preparing"
+        },
+        {
+          "status": "Ready for Dispatch",
+          "timestamp": "2026-10-23T13:18:10.032Z",
+          "note": "Testing transition to Ready for Dispatch"
+        },
+        {
+          "status": "Out for Delivery",
+          "timestamp": "2026-10-23T13:18:10.033Z",
+          "note": "Testing transition to Out for Delivery"
+        },
+        {
+          "status": "Delivered",
+          "timestamp": "2026-10-23T13:18:10.033Z",
+          "note": "Testing transition to Delivered"
+        }
+      ],
+      "createdAt": "2026-10-23T13:18:10.029Z",
+      "updatedAt": "2026-10-23T13:18:10.033Z",
+      "estimatedDeliveryTime": "45 mins"
+    },
     {
       "id": "ord-1792760015317-1613",
       "orderNumber": "CCC-20261023-1613",

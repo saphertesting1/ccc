@@ -1,12 +1,27 @@
 -- =========================================================================
--- CHANDU CHICKEN CENTER - SUPABASE PRODUCTION SETUP & RLS SECURITY POLICIES
--- Run this complete script in the Supabase Dashboard -> SQL Editor
+-- CHANDU CHICKEN CENTER - SECURE PRODUCTION SUPABASE DATABASE SETUP
+-- =========================================================================
+-- Architecture:
+--   1. Role-Based Access Control (RBAC) via trusted `public.admin_users` table
+--   2. Hardened `is_admin()` function without client-editable `user_metadata`
+--   3. Privacy-protected order tracking with masked customer PII
+--   4. Guest checkout preserved without mandatory customer login
+--   5. Full admin product management (INSERT, UPDATE, DELETE) with RLS
+--   6. Safe idempotent seeds for all 6 categories, 9 products, and settings
+--
+-- HOW TO RUN:
+--   Copy this entire script and execute it in Supabase Dashboard -> SQL Editor.
+--   Do NOT execute automated scripts; review and run manually.
 -- =========================================================================
 
--- 1. Enable UUID Extension
+-- 1. EXTENSIONS
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. CATEGORIES TABLE
+-- =========================================================================
+-- 2. CORE APPLICATION TABLES
+-- =========================================================================
+
+-- CATEGORIES TABLE
 CREATE TABLE IF NOT EXISTS public.categories (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -18,7 +33,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. PRODUCTS TABLE
+-- PRODUCTS TABLE
 CREATE TABLE IF NOT EXISTS public.products (
     id TEXT PRIMARY KEY,
     category_id TEXT NOT NULL REFERENCES public.categories(id) ON DELETE RESTRICT,
@@ -27,7 +42,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     description TEXT NOT NULL,
     image_url TEXT NOT NULL,
     cut_options JSONB NOT NULL DEFAULT '["Curry Cut", "Biryani Cut", "Small Pieces"]'::jsonb,
-    weights JSONB NOT NULL DEFAULT '[{"weight":"250g","price":65,"inStock":true},{"weight":"500g","price":125,"inStock":true},{"weight":"1kg","price":240,"inStock":true}]'::jsonb,
+    weights JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_available BOOLEAN NOT NULL DEFAULT TRUE,
     is_featured BOOLEAN NOT NULL DEFAULT FALSE,
     badge TEXT,
@@ -36,11 +51,12 @@ CREATE TABLE IF NOT EXISTS public.products (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for fast category and availability queries
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS weights JSONB NOT NULL DEFAULT '[]'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_available ON public.products(is_available);
+CREATE INDEX IF NOT EXISTS idx_products_featured ON public.products(is_featured);
 
--- 4. PRODUCT WEIGHTS TABLE (Normalized variant pricing support)
+-- PRODUCT WEIGHTS TABLE (Normalized variant pricing)
 CREATE TABLE IF NOT EXISTS public.product_weights (
     id BIGSERIAL PRIMARY KEY,
     product_id TEXT NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
@@ -53,7 +69,7 @@ CREATE TABLE IF NOT EXISTS public.product_weights (
 
 CREATE INDEX IF NOT EXISTS idx_product_weights_pid ON public.product_weights(product_id);
 
--- 5. SHOP SETTINGS TABLE (Singleton row with id = 1)
+-- SHOP SETTINGS TABLE (Singleton row with id = 1)
 CREATE TABLE IF NOT EXISTS public.shop_settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
     shop_name TEXT NOT NULL DEFAULT 'Chandu Chicken Center',
@@ -75,12 +91,7 @@ CREATE TABLE IF NOT EXISTS public.shop_settings (
     CONSTRAINT single_shop_settings_row CHECK (id = 1)
 );
 
--- Seed initial shop settings if empty
-INSERT INTO public.shop_settings (id, shop_name, min_order_amount, delivery_fee, free_delivery_threshold)
-VALUES (1, 'Chandu Chicken Center', 0.00, 30.00, 499.00)
-ON CONFLICT (id) DO NOTHING;
-
--- 6. ORDERS TABLE
+-- ORDERS TABLE
 CREATE TABLE IF NOT EXISTS public.orders (
     id TEXT PRIMARY KEY,
     order_number TEXT UNIQUE NOT NULL,
@@ -103,72 +114,246 @@ CREATE TABLE IF NOT EXISTS public.orders (
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders(payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_phone ON public.orders USING btree ((customer->>'phone'));
 
 -- =========================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- Enforce database-side protection so ordinary users cannot alter records.
+-- 3. TRUSTED ADMIN AUTHORIZATION SYSTEM
 -- =========================================================================
 
--- Enable RLS on all tables
+-- Dedicated table storing authorized shop administrators
+CREATE TABLE IF NOT EXISTS public.admin_users (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL DEFAULT 'super_admin' CHECK (role IN ('admin', 'super_admin')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Secure function to verify if the requesting user is an authorized admin
+-- CRITICAL SECURITY:
+--   1. Checks trusted `public.admin_users` table
+--   2. Checks server-controlled `app_metadata` (only settable via service role/dashboard)
+--   3. NEVER trusts `user_metadata` (preventing client-side token spoofing)
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+BEGIN
+  -- 1. Check if authenticated user's UUID exists in trusted public.admin_users
+  IF auth.uid() IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.admin_users WHERE id = auth.uid()
+  ) THEN
+    RETURN TRUE;
+  END IF;
+
+  -- 2. Server-controlled role claim in app_metadata (cannot be altered by client SDK)
+  IF coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') IN ('admin', 'super_admin') THEN
+    RETURN TRUE;
+  END IF;
+
+  -- User metadata is intentionally EXCLUDED to prevent privilege escalation
+  RETURN FALSE;
+END;
+$$;
+
+-- Secure helper function to safely authorize an administrator account by email.
+-- Can only be executed from the SQL Editor or by service_role.
+CREATE OR REPLACE FUNCTION public.authorize_admin_by_email(target_email TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id UUID;
+  v_clean_email TEXT;
+BEGIN
+  v_clean_email := lower(trim(target_email));
+  IF v_clean_email IS NULL OR v_clean_email = '' THEN
+    RETURN 'ERROR: Please provide a valid email address.';
+  END IF;
+
+  SELECT id INTO v_user_id FROM auth.users WHERE lower(email) = v_clean_email LIMIT 1;
+  IF v_user_id IS NULL THEN
+    RETURN 'ERROR: No Supabase Auth user found with email "' || target_email || '". Please create the user under Supabase -> Authentication -> Users first.';
+  END IF;
+
+  INSERT INTO public.admin_users (id, email, role)
+  VALUES (v_user_id, v_clean_email, 'super_admin')
+  ON CONFLICT (id) DO UPDATE SET role = 'super_admin', email = v_clean_email;
+
+  RETURN 'SUCCESS: User ' || target_email || ' (UUID: ' || v_user_id || ') is now authorized as super_admin.';
+END;
+$$;
+
+-- Only database owner / service role may call the promotion helper
+REVOKE ALL ON FUNCTION public.authorize_admin_by_email(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.authorize_admin_by_email(TEXT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.authorize_admin_by_email(TEXT) TO service_role;
+
+-- Clean up any insecure legacy functions
+DROP FUNCTION IF EXISTS public.get_customer_orders_by_phone(TEXT);
+DROP FUNCTION IF EXISTS public.get_order_by_reference(TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.get_order_by_reference(TEXT);
+
+-- Secure function for guest customer tracking (Strict Least-Privilege Exposure)
+-- Public callers receive ONLY: order_number, order_status, status_history, estimated_delivery_time, created_at.
+-- Customer details, item details, billing amounts, payment details, internal IDs, and idempotency keys are strictly NULL for public callers.
+-- Full order disclosure is ONLY granted to authenticated and authorized shop administrators.
+CREATE OR REPLACE FUNCTION public.get_order_by_reference(p_reference TEXT)
+RETURNS TABLE (
+    id TEXT,
+    order_number TEXT,
+    idempotency_key TEXT,
+    customer JSONB,
+    items JSONB,
+    subtotal NUMERIC(10, 2),
+    delivery_fee NUMERIC(10, 2),
+    discount NUMERIC(10, 2),
+    total_amount NUMERIC(10, 2),
+    payment_method TEXT,
+    payment_status TEXT,
+    order_status TEXT,
+    status_history JSONB,
+    estimated_delivery_time TEXT,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+STABLE
+AS $$
+DECLARE
+  v_ref TEXT;
+  v_order public.orders%ROWTYPE;
+  v_is_admin BOOLEAN;
+BEGIN
+  v_ref := trim(coalesce(p_reference, ''));
+  IF v_ref = '' THEN
+    RETURN;
+  END IF;
+
+  SELECT * INTO v_order
+  FROM public.orders
+  WHERE public.orders.order_number = v_ref OR public.orders.id = v_ref
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  -- Verify whether caller is an authenticated, authorized shop administrator
+  v_is_admin := public.is_admin();
+
+  IF v_is_admin THEN
+    -- Full order disclosure for authorized administrators ONLY
+    RETURN QUERY
+    SELECT 
+      v_order.id,
+      v_order.order_number,
+      v_order.idempotency_key,
+      v_order.customer,
+      v_order.items,
+      v_order.subtotal,
+      v_order.delivery_fee,
+      v_order.discount,
+      v_order.total_amount,
+      v_order.payment_method,
+      v_order.payment_status,
+      v_order.order_status,
+      v_order.status_history,
+      v_order.estimated_delivery_time,
+      v_order.created_at,
+      v_order.updated_at;
+  ELSE
+    -- Minimal public tracking output:
+    -- Exposes ONLY order reference, order status, and delivery-progress info.
+    -- All customer details, items, billing amounts, payment details, and internal keys are completely redacted.
+    RETURN QUERY
+    SELECT 
+      NULL::TEXT,                       -- id (redacted)
+      v_order.order_number,             -- order reference for display
+      NULL::TEXT,                       -- idempotency_key (redacted)
+      NULL::JSONB,                      -- customer (redacted)
+      NULL::JSONB,                      -- items (redacted)
+      NULL::NUMERIC(10, 2),             -- subtotal (redacted)
+      NULL::NUMERIC(10, 2),             -- delivery_fee (redacted)
+      NULL::NUMERIC(10, 2),             -- discount (redacted)
+      NULL::NUMERIC(10, 2),             -- total_amount (redacted)
+      NULL::TEXT,                       -- payment_method (redacted)
+      NULL::TEXT,                       -- payment_status (redacted)
+      v_order.order_status,             -- order status
+      v_order.status_history,           -- butchering and delivery progress steps
+      v_order.estimated_delivery_time,  -- estimated delivery time
+      v_order.created_at,               -- order timestamp
+      NULL::TIMESTAMPTZ;                -- updated_at (redacted)
+  END IF;
+END;
+$$;
+
+-- =========================================================================
+-- 4. ROW LEVEL SECURITY (RLS) POLICIES
+-- =========================================================================
+
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_weights ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.shop_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
 
 -- 1. Categories Policies
--- Everyone (anonymous + authenticated) can view categories
 DROP POLICY IF EXISTS "Public can view categories" ON public.categories;
 CREATE POLICY "Public can view categories"
     ON public.categories FOR SELECT
     USING (true);
 
--- Only authenticated admins can insert, update, delete categories
 DROP POLICY IF EXISTS "Admins can insert categories" ON public.categories;
 CREATE POLICY "Admins can insert categories"
     ON public.categories FOR INSERT
     TO authenticated
-    WITH CHECK (true);
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can update categories" ON public.categories;
 CREATE POLICY "Admins can update categories"
     ON public.categories FOR UPDATE
     TO authenticated
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can delete categories" ON public.categories;
 CREATE POLICY "Admins can delete categories"
     ON public.categories FOR DELETE
     TO authenticated
-    USING (true);
+    USING (public.is_admin());
 
 -- 2. Products Policies
--- Public can view products
 DROP POLICY IF EXISTS "Public can view products" ON public.products;
 CREATE POLICY "Public can view products"
     ON public.products FOR SELECT
     USING (true);
 
--- Only authenticated admins can modify products
 DROP POLICY IF EXISTS "Admins can insert products" ON public.products;
 CREATE POLICY "Admins can insert products"
     ON public.products FOR INSERT
     TO authenticated
-    WITH CHECK (true);
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can update products" ON public.products;
 CREATE POLICY "Admins can update products"
     ON public.products FOR UPDATE
     TO authenticated
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can delete products" ON public.products;
 CREATE POLICY "Admins can delete products"
     ON public.products FOR DELETE
     TO authenticated
-    USING (true);
+    USING (public.is_admin());
 
 -- 3. Product Weights Policies
 DROP POLICY IF EXISTS "Public can view product weights" ON public.product_weights;
@@ -180,58 +365,125 @@ DROP POLICY IF EXISTS "Admins can manage product weights" ON public.product_weig
 CREATE POLICY "Admins can manage product weights"
     ON public.product_weights FOR ALL
     TO authenticated
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 -- 4. Shop Settings Policies
--- Everyone can read shop settings
 DROP POLICY IF EXISTS "Public can view shop settings" ON public.shop_settings;
 CREATE POLICY "Public can view shop settings"
     ON public.shop_settings FOR SELECT
     USING (true);
 
--- Only authenticated admins can update shop settings
 DROP POLICY IF EXISTS "Admins can update shop settings" ON public.shop_settings;
 CREATE POLICY "Admins can update shop settings"
     ON public.shop_settings FOR UPDATE
     TO authenticated
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can insert shop settings" ON public.shop_settings;
 CREATE POLICY "Admins can insert shop settings"
     ON public.shop_settings FOR INSERT
     TO authenticated
-    WITH CHECK (true);
+    WITH CHECK (public.is_admin());
 
--- 5. Orders Policies
--- Anyone (guest customer or admin) can insert an order
+-- 5. Orders Policies (Strict Customer Privacy Protection)
+-- Guest customers can place orders without login
 DROP POLICY IF EXISTS "Public guest can create order" ON public.orders;
-CREATE POLICY "Public guest can create order"
+DROP POLICY IF EXISTS "Anyone can insert orders" ON public.orders;
+CREATE POLICY "Anyone can insert orders"
     ON public.orders FOR INSERT
     WITH CHECK (true);
 
--- Anyone can read their own order via order number or id; authenticated admins can read all orders
+-- Direct SELECT on orders table is strictly restricted to verified shop administrators
+-- (Casual visitors MUST use the privacy-masked get_order_by_reference function)
 DROP POLICY IF EXISTS "Public can view orders" ON public.orders;
-CREATE POLICY "Public can view orders"
+DROP POLICY IF EXISTS "Admins can view orders" ON public.orders;
+CREATE POLICY "Admins can view orders"
     ON public.orders FOR SELECT
-    USING (true);
+    TO authenticated
+    USING (public.is_admin());
 
--- Only authenticated admins can update order status / payment status
 DROP POLICY IF EXISTS "Admins can update orders" ON public.orders;
 CREATE POLICY "Admins can update orders"
     ON public.orders FOR UPDATE
     TO authenticated
-    USING (true)
-    WITH CHECK (true);
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
+CREATE POLICY "Admins can delete orders"
+    ON public.orders FOR DELETE
+    TO authenticated
+    USING (public.is_admin());
+
+-- 6. Admin Users Table Policies
+DROP POLICY IF EXISTS "Admins can view admin_users" ON public.admin_users;
+CREATE POLICY "Admins can view admin_users"
+    ON public.admin_users FOR SELECT
+    TO authenticated
+    USING (id = auth.uid() OR public.is_admin());
+
+DROP POLICY IF EXISTS "Admins can manage admin_users" ON public.admin_users;
+CREATE POLICY "Admins can manage admin_users"
+    ON public.admin_users FOR ALL
+    TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
 -- =========================================================================
--- INITIAL SEED DATA FOR CATEGORIES & COMPLETE 9 PRODUCTS CATALOG
+-- 5. LEAST-PRIVILEGE ROLE PERMISSIONS (GRANTs)
 -- =========================================================================
--- Ensure weights column exists if table was created earlier without it
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS weights JSONB NOT NULL DEFAULT '[]'::jsonb;
 
--- All 6 categories
+-- Grant Schema Usage
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- Categories (Public read, authenticated admin write)
+GRANT SELECT ON TABLE public.categories TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public.categories TO authenticated;
+GRANT ALL ON TABLE public.categories TO service_role;
+
+-- Products (Public read, authenticated admin write)
+GRANT SELECT ON TABLE public.products TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public.products TO authenticated;
+GRANT ALL ON TABLE public.products TO service_role;
+
+-- Product Weights (Public read, authenticated admin write)
+GRANT SELECT ON TABLE public.product_weights TO anon, authenticated;
+GRANT INSERT, UPDATE, DELETE ON TABLE public.product_weights TO authenticated;
+GRANT ALL ON TABLE public.product_weights TO service_role;
+
+-- Shop Settings (Public read, authenticated admin write)
+GRANT SELECT ON TABLE public.shop_settings TO anon, authenticated;
+GRANT INSERT, UPDATE ON TABLE public.shop_settings TO authenticated;
+GRANT ALL ON TABLE public.shop_settings TO service_role;
+
+-- Orders (Public insert only; authenticated admin for select, update, delete)
+GRANT INSERT ON TABLE public.orders TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.orders TO authenticated;
+GRANT ALL ON TABLE public.orders TO service_role;
+
+-- Admin Users (Authenticated check only)
+GRANT SELECT ON TABLE public.admin_users TO authenticated;
+GRANT ALL ON TABLE public.admin_users TO service_role;
+
+-- Sequences
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+-- Execution permissions on secure functions
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_order_by_reference(TEXT) TO anon, authenticated, service_role;
+
+-- =========================================================================
+-- 6. SAFE SEED DATA (Does NOT overwrite existing production customizations)
+-- =========================================================================
+
+-- Seed Shop Settings singleton (preserves existing if already configured)
+INSERT INTO public.shop_settings (id, shop_name, min_order_amount, delivery_fee, free_delivery_threshold)
+VALUES (1, 'Chandu Chicken Center', 0.00, 30.00, 499.00)
+ON CONFLICT (id) DO NOTHING;
+
+-- Seed All 6 Categories (preserves existing if already configured)
 INSERT INTO public.categories (id, name, slug, description, image_url, display_order)
 VALUES
     ('cat-fresh-cuts', 'Fresh Chicken Cuts', 'fresh-chicken-cuts', 'Daily fresh tender chicken cleaned with RO water', 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=600&q=80', 1),
@@ -240,13 +492,9 @@ VALUES
     ('cat-appetizers', 'Drumsticks & Wings', 'drumsticks-wings', 'Juicy chicken drumsticks and lollipop cuts', 'https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=600&q=80', 4),
     ('cat-country', 'Country Chicken (Natukodi)', 'country-chicken-natukodi', 'Authentic free-range desi country chicken with rustic flavor', 'https://images.unsplash.com/photo-1548550023-2bdb3c5beed7?auto=format&fit=crop&w=600&q=80', 5),
     ('cat-eggs', 'Farm Fresh Eggs', 'farm-fresh-eggs', 'Nutrient-rich, farm-laid white & country brown table eggs', 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?auto=format&fit=crop&w=600&q=80', 6)
-ON CONFLICT (id) DO UPDATE SET
-    name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    image_url = EXCLUDED.image_url,
-    display_order = EXCLUDED.display_order;
+ON CONFLICT (id) DO NOTHING;
 
--- All 9 Products
+-- Seed Complete 9 Products Catalog (preserves existing if already configured)
 INSERT INTO public.products (id, category_id, name, slug, description, image_url, cut_options, weights, is_available, is_featured, badge, net_weight_description)
 VALUES
     ('prod-curry-cut', 'cat-fresh-cuts', 'Fresh Chicken Curry Cut (Skinless)', 'fresh-chicken-curry-cut-skinless', 'Tender, juicy bone-in pieces crafted from farm-raised young chicken. Includes mix of drumstick, thigh, breast and back pieces ideal for Indian curries and gravies. 100% halal cleaned with RO water.', 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80', '["Standard Curry Cut (12-16 pcs/kg)", "Small Bites (South Indian Gravy Cut)", "Skin-On Traditional Cut"]'::jsonb, '[{"weight":"250g","price":65,"inStock":true},{"weight":"500g","price":125,"inStock":true},{"weight":"1kg","price":240,"inStock":true}]'::jsonb, true, true, 'Bestseller', 'Cleaned net weight. Exact weight as billed.'),
@@ -258,17 +506,9 @@ VALUES
     ('prod-whole-chicken', 'cat-fresh-cuts', 'Whole Fresh Chicken (Skinless & Dressed)', 'whole-fresh-chicken-skinless-dressed', 'Full dressed tender young broiler chicken, gutted, neck removed, washed with RO water. Ready for whole roasting or custom butchering at home.', 'https://images.unsplash.com/photo-1588166524941-3bf61a9c41db?auto=format&fit=crop&w=800&q=80', '["Whole Dressed Bird", "Halved (2 halves)", "Quartered (4 pieces)"]'::jsonb, '[{"weight":"1kg","price":220,"inStock":true}]'::jsonb, true, false, 'Great Value', 'Net bird weight 1.0 kg - 1.1 kg.'),
     ('prod-liver-gizzard', 'cat-fresh-cuts', 'Fresh Chicken Liver & Gizzard Mix', 'fresh-chicken-liver-gizzard-mix', 'Freshly cleaned nutrient-dense iron-rich chicken liver and firm gizzards, thoroughly washed and cleaned. Great for spicy dry roasts.', 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80', '["Cleaned Mix (Liver + Gizzard)", "Liver Only", "Gizzard Only"]'::jsonb, '[{"weight":"250g","price":60,"inStock":true},{"weight":"500g","price":110,"inStock":true}]'::jsonb, true, false, 'High Iron', 'Cleaned thoroughly with RO water.'),
     ('prod-farm-eggs', 'cat-eggs', 'Farm Fresh White Table Eggs (Pack of 12)', 'farm-fresh-white-table-eggs-pack-12', 'Clean, unfertilized, graded white eggs from healthy hens fed a balanced grain diet. Packed in sturdy eco-friendly egg crates to prevent breakage during transit.', 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?auto=format&fit=crop&w=800&q=80', '["Pack of 12 Eggs", "Pack of 24 Eggs"]'::jsonb, '[{"weight":"500g","price":90,"inStock":true},{"weight":"1kg","price":170,"inStock":true}]'::jsonb, true, false, 'Daily Essential', 'Carefully cushioned packaging.')
-ON CONFLICT (id) DO UPDATE SET
-    name = EXCLUDED.name,
-    category_id = EXCLUDED.category_id,
-    description = EXCLUDED.description,
-    image_url = EXCLUDED.image_url,
-    cut_options = EXCLUDED.cut_options,
-    weights = EXCLUDED.weights,
-    badge = EXCLUDED.badge,
-    net_weight_description = EXCLUDED.net_weight_description;
+ON CONFLICT (id) DO NOTHING;
 
--- Populate product_weights normalized table
+-- Seed Product Weights (preserves existing if already configured)
 INSERT INTO public.product_weights (product_id, weight, price, in_stock)
 VALUES
     ('prod-curry-cut', '250g', 65, true),
@@ -291,21 +531,30 @@ VALUES
     ('prod-liver-gizzard', '500g', 110, true),
     ('prod-farm-eggs', '500g', 90, true),
     ('prod-farm-eggs', '1kg', 170, true)
-ON CONFLICT (product_id, weight) DO UPDATE SET
-    price = EXCLUDED.price,
-    in_stock = EXCLUDED.in_stock;
+ON CONFLICT (product_id, weight) DO NOTHING;
 
 -- =========================================================================
--- PERMISSIONS & ROLES GRANTS (CRITICAL for PostgREST Schema Cache recognition)
+-- 7. HOW TO AUTHORIZE YOUR ADMINISTRATOR ACCOUNT (MANUAL STEP)
 -- =========================================================================
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-GRANT INSERT ON TABLE public.orders TO anon;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+-- Security Notice:
+--   Users are NOT automatically promoted to administrator.
+--   To safely authorize your verified shop owner account:
+--
+--   Step 1: Go to Supabase Dashboard -> Authentication -> Users.
+--           Ensure your administrator user account is created with your real email.
+--
+--   Step 2: Run the following single statement in SQL Editor (replace with your email):
+--           SELECT public.authorize_admin_by_email('your-admin-email@example.com');
+--
+--           Alternatively, you can run the direct insert statement:
+--           INSERT INTO public.admin_users (id, email, role)
+--           SELECT id, email, 'super_admin'
+--           FROM auth.users
+--           WHERE lower(email) = lower('your-admin-email@example.com')
+--           ON CONFLICT (id) DO NOTHING;
+-- =========================================================================
 
 -- =========================================================================
--- RELOAD POSTGREST SCHEMA CACHE (Resolves "Could not find table in schema cache")
+-- 8. RELOAD POSTGREST SCHEMA CACHE
 -- =========================================================================
 NOTIFY pgrst, 'reload schema';
-

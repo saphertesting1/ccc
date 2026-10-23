@@ -217,73 +217,83 @@ export default function OrderStatusPage() {
             </div>
           )}
 
-          {/* Separate Payment & Delivery Information Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Payment Snapshot */}
-            <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
-              <div className="flex items-center justify-between border-b border-stone-100 pb-2">
-                <span className="font-bold text-xs text-stone-500 uppercase tracking-wider">Payment Details</span>
-                <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full ${
-                  order.paymentStatus === 'Paid'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
-                  Payment: {order.paymentStatus}
-                </span>
-              </div>
-              <div className="text-xs space-y-1.5 text-stone-700">
-                <div className="flex justify-between">
-                  <span>Method:</span>
-                  <span className="font-bold text-[#38251F]">{order.paymentMethod === 'COD' ? 'Cash on Delivery (COD)' : 'UPI'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Total Bill:</span>
-                  <span className="font-bold text-base text-[#D92332]">₹{order.totalAmount}</span>
-                </div>
-                {order.paymentStatus === 'Pending' && (
-                  <p className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded-lg border border-amber-200/60 mt-2">
-                    Payable to delivery partner at your doorstep. Please keep exact change ready.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Destination Snapshot */}
-            <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
-              <div className="border-b border-stone-100 pb-2">
-                <span className="font-bold text-xs text-stone-500 uppercase tracking-wider">Delivery Recipient</span>
-              </div>
-              <div className="text-xs text-stone-700 space-y-1">
-                <div className="font-bold text-[#38251F]">{order.customer.name}</div>
-                <div className="text-stone-600">{order.customer.address}</div>
-                {order.customer.landmark && (
-                  <div className="text-stone-500">Landmark: {order.customer.landmark}</div>
-                )}
-                <div className="font-medium text-stone-800 pt-1 flex items-center gap-1">
-                  <Phone className="w-3.5 h-3.5 text-[#D92332]" />
-                  <span>{order.customer.phone}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Item Breakdown */}
-          <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
-            <h4 className="font-bold text-sm text-[#38251F]">Cuts in this Order</h4>
-            <div className="divide-y divide-stone-100 text-xs">
-              {order.items.map((item, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-[#38251F]">{item.productName}</span>
-                    <span className="text-stone-500 text-[11px] ml-2">
-                      ({item.weight} • {item.cutPreference} • Qty {item.quantity})
+          {/* Separate Payment & Delivery Information Cards (displayed when details are present) */}
+          {(Boolean(order.totalAmount) || Boolean(order.customer?.name)) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Payment Snapshot */}
+              {Boolean(order.totalAmount) && (
+                <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between border-b border-stone-100 pb-2">
+                    <span className="font-bold text-xs text-stone-500 uppercase tracking-wider">Payment Details</span>
+                    <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full ${
+                      order.paymentStatus === 'Paid'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      Payment: {order.paymentStatus}
                     </span>
                   </div>
-                  <span className="font-extrabold text-[#38251F]">₹{item.subtotal}</span>
+                  <div className="text-xs space-y-1.5 text-stone-700">
+                    <div className="flex justify-between">
+                      <span>Method:</span>
+                      <span className="font-bold text-[#38251F]">{order.paymentMethod === 'COD' ? 'Cash on Delivery (COD)' : 'UPI'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Bill:</span>
+                      <span className="font-bold text-base text-[#D92332]">₹{order.totalAmount}</span>
+                    </div>
+                    {order.paymentStatus === 'Pending' && (
+                      <p className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded-lg border border-amber-200/60 mt-2">
+                        Payable to delivery partner at your doorstep. Please keep exact change ready.
+                      </p>
+                    )}
+                  </div>
                 </div>
-              ))}
+              )}
+
+              {/* Destination Snapshot */}
+              {Boolean(order.customer?.name) && (
+                <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
+                  <div className="border-b border-stone-100 pb-2">
+                    <span className="font-bold text-xs text-stone-500 uppercase tracking-wider">Delivery Recipient</span>
+                  </div>
+                  <div className="text-xs text-stone-700 space-y-1">
+                    <div className="font-bold text-[#38251F]">{order.customer.name}</div>
+                    {order.customer.address && <div className="text-stone-600">{order.customer.address}</div>}
+                    {order.customer.landmark && (
+                      <div className="text-stone-500">Landmark: {order.customer.landmark}</div>
+                    )}
+                    {order.customer.phone && (
+                      <div className="font-medium text-stone-800 pt-1 flex items-center gap-1">
+                        <Phone className="w-3.5 h-3.5 text-[#D92332]" />
+                        <span>{order.customer.phone}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Item Breakdown (displayed when items are present) */}
+          {Array.isArray(order.items) && order.items.length > 0 && (
+            <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-xs space-y-3">
+              <h4 className="font-bold text-sm text-[#38251F]">Cuts in this Order</h4>
+              <div className="divide-y divide-stone-100 text-xs">
+                {order.items.map((item, idx) => (
+                  <div key={idx} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-[#38251F]">{item.productName}</span>
+                      <span className="text-stone-500 text-[11px] ml-2">
+                        ({item.weight} • {item.cutPreference} • Qty {item.quantity})
+                      </span>
+                    </div>
+                    <span className="font-extrabold text-[#38251F]">₹{item.subtotal}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Direct Shop Support Links */}
           <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-amber-50 rounded-2xl border border-amber-200 gap-3 text-xs">
