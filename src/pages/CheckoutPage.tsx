@@ -23,6 +23,12 @@ export default function CheckoutPage() {
   const { settings } = useShop();
   const navigate = useNavigate();
 
+  // Minimum order validation (₹0 allows all orders; strictly enforces threshold if > 0)
+  const minOrderAmount = typeof settings?.minOrderAmount === 'number' && !isNaN(settings.minOrderAmount)
+    ? settings.minOrderAmount
+    : 0;
+  const isBelowMinOrder = minOrderAmount > 0 && subtotal < minOrderAmount;
+
   // Load saved profile & addresses from Account
   const savedProfile = (() => {
     try {
@@ -80,6 +86,11 @@ export default function CheckoutPage() {
     setErrorMessage(null);
 
     // Validation
+    if (isBelowMinOrder) {
+      setErrorMessage(`Minimum order amount is ₹${minOrderAmount}. Please add ₹${minOrderAmount - subtotal} more worth of items to checkout.`);
+      return;
+    }
+
     if (!name.trim() || name.trim().length < 2) {
       setErrorMessage('Please enter your full name (at least 2 characters).');
       return;
@@ -170,7 +181,7 @@ export default function CheckoutPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 pb-28 md:pb-16">
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 pb-28 md:pb-16 overflow-x-hidden">
       <button
         onClick={() => navigate(-1)}
         className="inline-flex items-center gap-1.5 text-xs font-bold text-stone-600 hover:text-[#D92332] transition-colors"
@@ -454,12 +465,22 @@ export default function CheckoutPage() {
               </div>
             </div>
 
+            {/* Minimum Order Warning if applicable */}
+            {isBelowMinOrder && (
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Add ₹{minOrderAmount - subtotal} more to meet the minimum order of ₹{minOrderAmount}.</span>
+              </div>
+            )}
+
             {/* Place Order CTA */}
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isBelowMinOrder}
               className={`w-full py-3.5 px-4 rounded-xl text-sm font-bold text-white transition-all flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] ${
-                isSubmitting ? 'bg-stone-400 cursor-wait' : 'bg-[#D92332] hover:bg-[#b81d2a]'
+                isSubmitting || isBelowMinOrder
+                  ? 'bg-stone-400 cursor-not-allowed opacity-80'
+                  : 'bg-[#D92332] hover:bg-[#b81d2a]'
               }`}
             >
               {isSubmitting ? (

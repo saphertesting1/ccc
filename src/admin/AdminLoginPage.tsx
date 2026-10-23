@@ -4,8 +4,8 @@ import { Lock, User, AlertCircle, ArrowLeft, ShieldCheck, KeyRound } from 'lucid
 import { useAdminAuth } from '../context/AdminAuthContext.js';
 
 export default function AdminLoginPage() {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('chandu@123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -103,17 +103,14 @@ export default function AdminLoginPage() {
             </button>
           </form>
 
-          {/* Development Default Credentials Box */}
-          <div className="bg-amber-50 p-3.5 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-1">
+          {/* Security Notice */}
+          <div className="bg-amber-50/80 p-3.5 rounded-2xl border border-amber-200/80 text-xs text-amber-900 space-y-1">
             <div className="flex items-center gap-1.5 font-bold">
               <ShieldCheck className="w-4 h-4 text-amber-700" />
-              <span>Shop Manager Credentials</span>
+              <span>Authorized Shop Manager Portal</span>
             </div>
             <p className="text-[11px] text-amber-800">
-              Supabase Auth: Use the email you created under <strong>Authentication &rarr; Users</strong> in Supabase.
-            </p>
-            <p className="text-[11px] text-amber-800">
-              Default Credentials: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">admin</code> • Password: <code className="font-bold bg-amber-100 px-1 py-0.5 rounded">chandu@123</code>
+              Sign in with the administrator email and password registered in your shop's Supabase Authentication.
             </p>
           </div>
 

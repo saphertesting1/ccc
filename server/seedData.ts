@@ -231,7 +231,7 @@ export const initialShopSettings: ShopSettings = {
   closeTime: '09:00 PM',
   deliveryFee: 30,
   freeDeliveryThreshold: 499,
-  minOrderAmount: 150,
+  minOrderAmount: 0,
   deliveryTimeEstimateMins: 45,
   announcementBanner: '⚡ Fast delivery in 45 minutes! 100% RO Water Cleaned, Antibiotic-Free Chicken.'
 };

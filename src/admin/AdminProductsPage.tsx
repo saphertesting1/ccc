@@ -33,6 +33,12 @@ export default function AdminProductsPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
 
+  // In-app delete confirmation state
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const loadProducts = async () => {
     try {
       setIsLoading(true);
@@ -40,6 +46,7 @@ export default function AdminProductsPage() {
       setProducts(data);
     } catch (e: any) {
       console.error('Failed to load admin products:', e);
+      setActionError(e.message || 'Failed to load products');
     } finally {
       setIsLoading(false);
     }
@@ -51,22 +58,32 @@ export default function AdminProductsPage() {
 
   const handleToggleProductStock = async (product: Product) => {
     try {
+      setActionError(null);
       await api.toggleProductStock(product.id, !product.isAvailable);
       await loadProducts();
       await refreshShopData();
+      setActionSuccess(`Stock status updated for ${product.name}`);
+      setTimeout(() => setActionSuccess(null), 3000);
     } catch (e: any) {
-      alert(e.message || 'Failed to update stock');
+      setActionError(e.message || 'Failed to update stock');
     }
   };
 
-  const handleDeleteProduct = async (productId: string) => {
-    if (!window.confirm('Are you sure you want to delete this chicken product? Existing historical sales will be preserved.')) return;
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) return;
     try {
-      await api.deleteProduct(productId);
+      setIsDeleting(true);
+      setActionError(null);
+      await api.deleteProduct(productToDelete.id);
+      setProductToDelete(null);
       await loadProducts();
       await refreshShopData();
+      setActionSuccess('Product removed successfully. Historical order records remain intact.');
+      setTimeout(() => setActionSuccess(null), 4000);
     } catch (e: any) {
-      alert(e.message || 'Failed to delete product');
+      setActionError(e.message || 'Failed to delete product from database');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -220,6 +237,20 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
+      {actionSuccess && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs font-semibold flex items-center gap-2 shadow-xs">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{actionSuccess}</span>
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-2xl text-xs font-semibold flex items-center gap-2 shadow-xs">
+          <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+
       {/* Search Bar */}
       <div className="bg-white p-3 rounded-2xl border border-stone-200 shadow-2xs">
         <div className="relative">
@@ -303,7 +334,7 @@ export default function AdminProductsPage() {
                       <span>Edit</span>
                     </button>
                     <button
-                      onClick={() => handleDeleteProduct(p.id)}
+                      onClick={() => setProductToDelete(p)}
                       className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600"
                       title="Delete Product"
                     >
@@ -405,7 +436,7 @@ export default function AdminProductsPage() {
                         <Edit className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDeleteProduct(p.id)}
+                        onClick={() => setProductToDelete(p)}
                         className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition-colors"
                         title="Delete Product"
                       >
@@ -628,6 +659,46 @@ export default function AdminProductsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">
+          <div className="bg-[#FFF9F1] rounded-3xl max-w-md w-full p-6 shadow-2xl border border-stone-300 relative text-[#38251F] space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#38251F]">Delete Chicken Product</h3>
+                <p className="text-xs text-stone-500">This action will remove the item from the live shop catalog.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-700 bg-amber-50 p-3 rounded-xl border border-amber-200">
+              Are you sure you want to remove <strong>"{productToDelete.name}"</strong>? Past customer orders and historical reports referencing this cut will remain completely safe.
+            </p>
+
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setProductToDelete(null)}
+                className="px-4 py-2 border border-stone-300 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={confirmDeleteProduct}
+                className="px-5 py-2 bg-[#D92332] hover:bg-[#b81d2a] text-white rounded-xl text-xs font-bold shadow-md transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : 'Yes, Delete Product'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -137,7 +137,30 @@ async function runTestSuite() {
   assert(invalidAdmin === null, 'Invalid admin password must be rejected');
   console.log('  ✅ Admin authentication security verified.');
 
-  console.log('\n🎉 ALL 7 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
+  // Test 8: Minimum Order Amount & Zero Threshold Logic
+  console.log('\n▶ Test 8: Minimum Order Amount & Zero-Threshold Logic');
+  // Default is 0
+  const defaultSettings = await repo.getShopSettings();
+  const minZero = defaultSettings.minOrderAmount ?? 0;
+  const isBelowMinWhenZero = minZero > 0 && 65 < minZero;
+  assert(!isBelowMinWhenZero, 'An order of ₹65 must NOT be blocked when minOrderAmount is 0');
+
+  // Updating settings to 150
+  await repo.updateShopSettings({ minOrderAmount: 150 });
+  const updated150 = await repo.getShopSettings();
+  assert(updated150.minOrderAmount === 150, 'Updated minOrderAmount should be 150');
+  const isBelowMinWhen150 = updated150.minOrderAmount > 0 && 65 < updated150.minOrderAmount;
+  assert(isBelowMinWhen150, 'An order of ₹65 must be blocked when minOrderAmount is 150');
+
+  // Updating settings back to 0
+  await repo.updateShopSettings({ minOrderAmount: 0 });
+  const updatedZero = await repo.getShopSettings();
+  assert(updatedZero.minOrderAmount === 0, 'Updated minOrderAmount should be 0');
+  const isBelowMinRestored = updatedZero.minOrderAmount > 0 && 65 < updatedZero.minOrderAmount;
+  assert(!isBelowMinRestored, 'An order of ₹65 must be allowed when minOrderAmount is set to 0');
+  console.log('  ✅ Zero-threshold and dynamic minimum order amount validation verified.');
+
+  console.log('\n🎉 ALL 8 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
 }
 
 runTestSuite().catch(err => {

@@ -21,7 +21,7 @@ export default function CartDrawer() {
 
   if (!isCartDrawerOpen) return null;
 
-  const minOrderAmount = typeof settings?.minOrderAmount === 'number' ? settings.minOrderAmount : 150;
+  const minOrderAmount = typeof settings?.minOrderAmount === 'number' ? settings.minOrderAmount : 0;
   const isBelowMinOrder = minOrderAmount > 0 && subtotal < minOrderAmount;
 
   const handleProceedToCheckout = () => {
@@ -37,8 +37,8 @@ export default function CartDrawer() {
         onClick={closeCartDrawer}
       />
 
-      <div className="fixed inset-y-0 right-0 max-w-full flex sm:pl-10">
-        <div className="w-full sm:w-screen max-w-md bg-[#FFF9F1] shadow-2xl flex flex-col h-full">
+      <div className="fixed inset-y-0 right-0 max-w-full flex">
+        <div className="w-screen max-w-full sm:max-w-md bg-[#FFF9F1] shadow-2xl flex flex-col h-full overflow-hidden">
           {/* Header */}
           <div className="p-4 bg-white border-b border-stone-200 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">

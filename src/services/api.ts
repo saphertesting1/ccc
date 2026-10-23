@@ -37,22 +37,18 @@ export function notifyShopDataChanged(): void {
   }
 }
 
-// Helper to safely execute fetch without throwing on Vercel 404 HTML pages
+// Safe fetch wrapper that handles non-JSON / HTML responses gracefully
 async function safeFetchJson<T>(url: string, init?: RequestInit, fallbackData?: T): Promise<T> {
   try {
     const res = await fetch(url, init);
     const contentType = res.headers.get('content-type') || '';
-    
-    // Check if server returned HTML (typical of Vercel 404 static page)
+
     if (!res.ok) {
       if (contentType.includes('text/html') || res.status === 404) {
         if (fallbackData !== undefined) {
-          console.warn(`[API] Endpoint ${url} returned 404; using fallback data.`);
           return fallbackData;
         }
-        throw new Error(
-          `Backend endpoint ${url} not found (404). If deployed on Vercel, ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in Vercel Project Settings.`
-        );
+        throw new Error(`Endpoint ${url} returned 404 Not Found.`);
       }
       let errText = `Request failed with status ${res.status}`;
       try {
@@ -75,57 +71,100 @@ async function safeFetchJson<T>(url: string, init?: RequestInit, fallbackData?: 
     return (await res.json()) as T;
   } catch (err: any) {
     if (fallbackData !== undefined) {
-      console.warn(`[API] Network error on ${url}: ${err.message}. Using fallback data.`);
       return fallbackData;
     }
     throw err;
   }
 }
 
-// Local storage backup helpers for offline/standalone resilience
-function getStoredSettings(): ShopSettings {
-  try {
-    const raw = localStorage.getItem('ccc_shop_settings');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...initialShopSettings, ...parsed };
-    }
-  } catch {
-    // ignore
+// Helper to map DB record to ShopSettings (handles both snake_case and camelCase)
+function mapDbToSettings(data: any, fallback: ShopSettings): ShopSettings {
+  if (!data) return fallback;
+
+  // CRITICAL: 0 is a valid minimum order amount!
+  let minOrder = fallback.minOrderAmount ?? 0;
+  if (typeof data.min_order_amount === 'number' && !isNaN(data.min_order_amount)) {
+    minOrder = data.min_order_amount;
+  } else if (typeof data.minOrderAmount === 'number' && !isNaN(data.minOrderAmount)) {
+    minOrder = data.minOrderAmount;
+  } else if (data.min_order_amount !== undefined && data.min_order_amount !== null) {
+    const parsed = parseFloat(data.min_order_amount);
+    if (!isNaN(parsed)) minOrder = parsed;
   }
-  return initialShopSettings;
+
+  let deliveryFee = fallback.deliveryFee ?? 30;
+  if (typeof data.delivery_fee === 'number' && !isNaN(data.delivery_fee)) {
+    deliveryFee = data.delivery_fee;
+  } else if (typeof data.deliveryFee === 'number' && !isNaN(data.deliveryFee)) {
+    deliveryFee = data.deliveryFee;
+  }
+
+  let freeDeliveryThreshold = fallback.freeDeliveryThreshold ?? 499;
+  if (typeof data.free_delivery_threshold === 'number' && !isNaN(data.free_delivery_threshold)) {
+    freeDeliveryThreshold = data.free_delivery_threshold;
+  } else if (typeof data.freeDeliveryThreshold === 'number' && !isNaN(data.freeDeliveryThreshold)) {
+    freeDeliveryThreshold = data.freeDeliveryThreshold;
+  }
+
+  return {
+    shopName: data.shop_name ?? data.shopName ?? fallback.shopName,
+    tagline: data.tagline ?? fallback.tagline,
+    shopPhone: data.shop_phone ?? data.shopPhone ?? fallback.shopPhone,
+    shopWhatsApp: data.shop_whatsapp ?? data.shopWhatsApp ?? fallback.shopWhatsApp,
+    address: data.address ?? fallback.address,
+    landmark: data.landmark ?? fallback.landmark,
+    city: data.city ?? fallback.city,
+    isOpen: data.is_open !== undefined ? Boolean(data.is_open) : (data.isOpen !== undefined ? Boolean(data.isOpen) : fallback.isOpen),
+    openTime: data.open_time ?? data.openTime ?? fallback.openTime,
+    closeTime: data.close_time ?? data.closeTime ?? fallback.closeTime,
+    deliveryFee,
+    freeDeliveryThreshold,
+    minOrderAmount: minOrder,
+    deliveryTimeEstimateMins: data.delivery_time_estimate_mins ?? data.deliveryTimeEstimateMins ?? fallback.deliveryTimeEstimateMins ?? 45,
+    announcementBanner: data.announcement_banner ?? data.announcementBanner ?? fallback.announcementBanner
+  };
 }
 
-function saveStoredSettings(settings: ShopSettings) {
-  try {
-    localStorage.setItem('ccc_shop_settings', JSON.stringify(settings));
-  } catch {
-    // ignore
-  }
-}
+// Helper to map DB record to Product (handles snake_case and weights JSON)
+function mapDbToProduct(r: any, categories: Category[]): Product {
+  const catId = r.category_id || r.categoryId;
+  const cat = categories.find(c => c.id === catId);
 
-function getStoredOrders(): Order[] {
-  try {
-    const raw = localStorage.getItem('ccc_orders');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+  let weights = r.weights;
+  if (typeof weights === 'string') {
+    try { weights = JSON.parse(weights); } catch {}
   }
-}
+  if (!Array.isArray(weights) || weights.length === 0) {
+    weights = [
+      { weight: '250g', price: 65, inStock: true },
+      { weight: '500g', price: 125, inStock: true },
+      { weight: '1kg', price: 240, inStock: true }
+    ];
+  }
 
-function saveStoredOrder(order: Order) {
-  try {
-    const orders = getStoredOrders();
-    const existingIdx = orders.findIndex(o => o.id === order.id || o.orderNumber === order.orderNumber);
-    if (existingIdx >= 0) {
-      orders[existingIdx] = order;
-    } else {
-      orders.unshift(order);
-    }
-    localStorage.setItem('ccc_orders', JSON.stringify(orders.slice(0, 100)));
-  } catch {
-    // ignore
+  let cutOptions = r.cut_options || r.cutOptions;
+  if (typeof cutOptions === 'string') {
+    try { cutOptions = JSON.parse(cutOptions); } catch {}
   }
+  if (!Array.isArray(cutOptions)) {
+    cutOptions = ['Curry Cut', 'Biryani Cut', 'Small Pieces'];
+  }
+
+  return {
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    categoryId: catId,
+    categoryName: cat ? cat.name : (r.category_name || r.categoryName || 'Fresh Chicken Cuts'),
+    description: r.description || '',
+    imageUrl: r.image_url || r.imageUrl || '',
+    weights,
+    cutOptions,
+    isAvailable: r.is_available !== undefined ? Boolean(r.is_available) : (r.isAvailable !== undefined ? Boolean(r.isAvailable) : true),
+    isFeatured: r.is_featured !== undefined ? Boolean(r.is_featured) : (r.isFeatured !== undefined ? Boolean(r.isFeatured) : false),
+    badge: r.badge || '',
+    netWeightDescription: r.net_weight_description || r.netWeightDescription || ''
+  };
 }
 
 export const api = {
@@ -133,13 +172,14 @@ export const api = {
   async getProducts(categoryId?: string, search?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
       try {
-        let query = supabase.from('products').select('*');
+        let query = supabase.from('products').select('*').eq('is_available', true);
         if (categoryId && categoryId !== 'all') {
-          query = query.eq('categoryId', categoryId);
+          query = query.eq('category_id', categoryId);
         }
         const { data, error } = await query;
         if (!error && data && data.length > 0) {
-          let list: Product[] = data;
+          const categories = await this.getCategories();
+          let list = data.map(r => mapDbToProduct(r, categories));
           if (search && search.trim()) {
             const q = search.toLowerCase().trim();
             list = list.filter(p =>
@@ -151,55 +191,53 @@ export const api = {
           return list;
         }
       } catch (e) {
-        console.warn('[Supabase] Failed to fetch products, falling back to catalog:', e);
+        console.warn('[Supabase] Failed to fetch products:', e);
       }
     }
 
-    // Try API with fallback to initialProducts
+    // Local API with fallback
     const params = new URLSearchParams();
     if (categoryId && categoryId !== 'all') params.append('category', categoryId);
     if (search) params.append('search', search);
     params.append('_t', Date.now().toString());
 
-    // Filter initialProducts for local fallback
-    let filteredInitial = [...initialProducts];
+    let filtered = [...initialProducts].filter(p => p.isAvailable);
     if (categoryId && categoryId !== 'all') {
-      filteredInitial = filteredInitial.filter(p => p.categoryId === categoryId);
+      filtered = filtered.filter(p => p.categoryId === categoryId);
     }
     if (search && search.trim()) {
       const q = search.toLowerCase().trim();
-      filteredInitial = filteredInitial.filter(p =>
+      filtered = filtered.filter(p =>
         p.name.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q) ||
-        (p.categoryName && p.categoryName.toLowerCase().includes(q))
+        p.description.toLowerCase().includes(q)
       );
     }
 
     const data = await safeFetchJson<{ success: boolean; products: Product[] }>(
       `${API_BASE}/products?${params.toString()}`,
       { cache: 'no-store' },
-      { success: true, products: filteredInitial }
+      { success: true, products: filtered }
     );
-    return data.products || filteredInitial;
+    return data.products || filtered;
   },
 
-  // Admin Products
+  // Admin Products (includes all active & deactivated items)
   async getAdminProducts(search?: string, categoryId?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
       try {
-        let query = supabase.from('products').select('*');
+        let query = supabase.from('products').select('*').order('created_at', { ascending: false });
         if (categoryId && categoryId !== 'all') {
-          query = query.eq('categoryId', categoryId);
+          query = query.eq('category_id', categoryId);
         }
         const { data, error } = await query;
         if (!error && data && data.length > 0) {
-          let list: Product[] = data;
+          const categories = await this.getCategories();
+          let list = data.map(r => mapDbToProduct(r, categories));
           if (search && search.trim()) {
             const q = search.toLowerCase().trim();
             list = list.filter(p =>
               p.name.toLowerCase().includes(q) ||
-              p.description.toLowerCase().includes(q) ||
-              (p.categoryName && p.categoryName.toLowerCase().includes(q))
+              p.description.toLowerCase().includes(q)
             );
           }
           return list;
@@ -214,13 +252,13 @@ export const api = {
     if (search) params.append('search', search);
     params.append('_t', Date.now().toString());
 
-    let filteredInitial = [...initialProducts];
+    let filtered = [...initialProducts];
     if (categoryId && categoryId !== 'all') {
-      filteredInitial = filteredInitial.filter(p => p.categoryId === categoryId);
+      filtered = filtered.filter(p => p.categoryId === categoryId);
     }
     if (search && search.trim()) {
       const q = search.toLowerCase().trim();
-      filteredInitial = filteredInitial.filter(p =>
+      filtered = filtered.filter(p =>
         p.name.toLowerCase().includes(q) ||
         p.description.toLowerCase().includes(q)
       );
@@ -232,16 +270,19 @@ export const api = {
         headers: getAdminAuthHeader(),
         cache: 'no-store'
       },
-      { success: true, products: filteredInitial }
+      { success: true, products: filtered }
     );
-    return data.products || filteredInitial;
+    return data.products || filtered;
   },
 
   async getProductById(id: string): Promise<Product> {
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase.from('products').select('*').eq('id', id).single();
-        if (!error && data) return data;
+        if (!error && data) {
+          const categories = await this.getCategories();
+          return mapDbToProduct(data, categories);
+        }
       } catch {
         // fallback
       }
@@ -263,9 +304,16 @@ export const api = {
         const { data, error } = await supabase
           .from('categories')
           .select('*')
-          .order('displayOrder', { ascending: true });
+          .order('display_order', { ascending: true });
         if (!error && data && data.length > 0) {
-          return data;
+          return data.map(r => ({
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+            description: r.description,
+            imageUrl: r.image_url || r.imageUrl,
+            displayOrder: r.display_order ?? r.displayOrder ?? 0
+          }));
         }
       } catch (e) {
         console.warn('[Supabase] Categories query error:', e);
@@ -282,41 +330,28 @@ export const api = {
 
   // Public Shop Settings
   async getShopSettings(): Promise<ShopSettings> {
-    const cached = getStoredSettings();
-
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
           .from('shop_settings')
           .select('*')
-          .limit(1)
+          .eq('id', 1)
           .maybeSingle();
 
         if (!error && data) {
-          const loaded: ShopSettings = {
-            ...cached,
-            ...data,
-            // Ensure minOrderAmount allows 0 as valid number
-            minOrderAmount: typeof data.minOrderAmount === 'number' ? data.minOrderAmount : (cached.minOrderAmount ?? 0),
-            freeDeliveryThreshold: typeof data.freeDeliveryThreshold === 'number' ? data.freeDeliveryThreshold : (cached.freeDeliveryThreshold ?? 499),
-            deliveryFee: typeof data.deliveryFee === 'number' ? data.deliveryFee : (cached.deliveryFee ?? 30)
-          };
-          saveStoredSettings(loaded);
-          return loaded;
+          return mapDbToSettings(data, initialShopSettings);
         }
       } catch (e) {
-        console.warn('[Supabase] Failed to fetch shop_settings:', e);
+        console.warn('[Supabase] Failed to fetch shop_settings from database:', e);
       }
     }
 
     const data = await safeFetchJson<{ success: boolean; settings: ShopSettings }>(
       `${API_BASE}/settings?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, settings: cached }
+      { success: true, settings: initialShopSettings }
     );
-    const resolved = data.settings || cached;
-    saveStoredSettings(resolved);
-    return resolved;
+    return mapDbToSettings(data.settings, initialShopSettings);
   },
 
   // Orders
@@ -377,11 +412,45 @@ export const api = {
     // Save to Supabase if available
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase.from('orders').insert([newOrder]).select().single();
+        const dbPayload = {
+          id: newOrder.id,
+          order_number: newOrder.orderNumber,
+          customer: newOrder.customer,
+          items: newOrder.items,
+          subtotal: newOrder.subtotal,
+          delivery_fee: newOrder.deliveryFee,
+          discount: newOrder.discount,
+          total_amount: newOrder.totalAmount,
+          payment_method: newOrder.paymentMethod,
+          payment_status: newOrder.paymentStatus,
+          order_status: newOrder.orderStatus,
+          status_history: newOrder.statusHistory,
+          created_at: newOrder.createdAt,
+          updated_at: newOrder.updatedAt
+        };
+
+        const { data, error } = await supabase.from('orders').insert([dbPayload]).select().single();
         if (!error && data) {
-          saveStoredOrder(data);
           notifyShopDataChanged();
-          return data;
+          return {
+            id: data.id,
+            orderNumber: data.order_number || data.orderNumber,
+            customer: data.customer,
+            items: data.items,
+            subtotal: parseFloat(data.subtotal),
+            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
+            discount: parseFloat(data.discount || 0),
+            totalAmount: parseFloat(data.total_amount || data.totalAmount),
+            paymentMethod: data.payment_method || data.paymentMethod,
+            paymentStatus: data.payment_status || data.paymentStatus,
+            orderStatus: data.order_status || data.orderStatus,
+            statusHistory: data.status_history || data.statusHistory || [],
+            createdAt: data.created_at || data.createdAt,
+            updatedAt: data.updated_at || data.updatedAt
+          };
+        }
+        if (error) {
+          console.warn('[Supabase] Order insert error:', error.message);
         }
       } catch (e) {
         console.warn('[Supabase] Failed to write order to Supabase:', e);
@@ -398,7 +467,6 @@ export const api = {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.order) {
-          saveStoredOrder(data.order);
           notifyShopDataChanged();
           return data.order;
         }
@@ -407,8 +475,6 @@ export const api = {
       // ignore
     }
 
-    // Always persist to local storage as guaranteed fallback
-    saveStoredOrder(newOrder);
     notifyShopDataChanged();
     return newOrder;
   },
@@ -421,22 +487,34 @@ export const api = {
         const { data, error } = await supabase
           .from('orders')
           .select('*')
-          .or(`id.eq.${decoded},orderNumber.eq.${decoded}`)
+          .or(`id.eq.${decoded},order_number.eq.${decoded}`)
           .maybeSingle();
-        if (!error && data) return data;
+
+        if (!error && data) {
+          return {
+            id: data.id,
+            orderNumber: data.order_number || data.orderNumber,
+            customer: data.customer,
+            items: data.items,
+            subtotal: parseFloat(data.subtotal),
+            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
+            discount: parseFloat(data.discount || 0),
+            totalAmount: parseFloat(data.total_amount || data.totalAmount),
+            paymentMethod: data.payment_method || data.paymentMethod,
+            paymentStatus: data.payment_status || data.paymentStatus,
+            orderStatus: data.order_status || data.orderStatus,
+            statusHistory: data.status_history || data.statusHistory || [],
+            createdAt: data.created_at || data.createdAt,
+            updatedAt: data.updated_at || data.updatedAt
+          };
+        }
       } catch {
         // fallback
       }
     }
 
-    // Try local storage
-    const stored = getStoredOrders().find(o => o.id === decoded || o.orderNumber === decoded);
-    if (stored) return stored;
-
     const data = await safeFetchJson<{ success: boolean; order: Order }>(
-      `${API_BASE}/orders/${encodeURIComponent(decoded)}`,
-      undefined,
-      stored ? { success: true, order: stored } : undefined
+      `${API_BASE}/orders/${encodeURIComponent(decoded)}`
     );
     if (!data?.order) throw new Error('Order not found');
     return data.order;
@@ -461,17 +539,17 @@ export const api = {
     };
   },
 
-  // Admin Authentication
-  async adminLogin(username: string, passwordPlain: string): Promise<{ token: string; admin: AdminUser }> {
-    const trimmedUser = username.trim();
+  // Admin Authentication - Strict verification, NO hardcoded bypasses
+  async adminLogin(usernameOrEmail: string, passwordPlain: string): Promise<{ token: string; admin: AdminUser }> {
+    const input = usernameOrEmail.trim();
 
-    // 1. If Supabase is configured, use Supabase Auth directly
+    // 1. Supabase Authentication
     if (isSupabaseConfigured && supabase) {
-      // Supabase Auth requires an email. If the user provided an email, use it directly.
-      // If they provided a username like 'admin', try standard email aliases or username.
-      const candidateEmails = trimmedUser.includes('@')
-        ? [trimmedUser]
-        : [`${trimmedUser}@chanduchicken.com`, `${trimmedUser}@gmail.com`, trimmedUser];
+      // If user passed email directly (e.g. admin@gmail.com), use it.
+      // If user typed username, try email formats
+      const candidateEmails = input.includes('@')
+        ? [input]
+        : [`${input}@chanduchicken.com`, `${input}@gmail.com`, input];
 
       let lastError = 'Invalid credentials';
       for (const email of candidateEmails) {
@@ -485,72 +563,39 @@ export const api = {
             const token = data.session?.access_token || `sb_${data.user.id}`;
             const adminObj: AdminUser = {
               id: data.user.id,
-              username: data.user.email ? data.user.email.split('@')[0] : trimmedUser,
+              username: data.user.email ? data.user.email.split('@')[0] : input,
               role: 'super_admin',
               fullName: data.user.user_metadata?.full_name || 'Shop Manager'
             };
             return { token, admin: adminObj };
           }
-          if (error) lastError = error.message;
+          if (error) {
+            lastError = error.message;
+          }
         } catch (e: any) {
           lastError = e.message || lastError;
         }
       }
 
-      // If user is developing or wants local fallback with default credentials
-      if (trimmedUser === 'admin' && passwordPlain === 'chandu@123') {
-        const devAdmin: AdminUser = {
-          id: 'adm-1',
-          username: 'admin',
-          role: 'super_admin',
-          fullName: 'Chandu (Owner & Butcher)'
-        };
-        return { token: 'dev_mock_admin_token_ccc', admin: devAdmin };
-      }
-
-      throw new Error(`Supabase Auth failed: ${lastError}`);
+      // NO BYPASS: reject invalid credentials
+      throw new Error(`Authentication failed: ${lastError}`);
     }
 
-    // 2. Local Express backend login
-    try {
-      const res = await fetch(`${API_BASE}/admin/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: trimmedUser, password: passwordPlain })
-      });
+    // 2. Local Backend Authentication
+    const res = await fetch(`${API_BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: input, password: passwordPlain })
+    });
 
-      const contentType = res.headers.get('content-type') || '';
-      if (!res.ok || contentType.includes('text/html')) {
-        // If running on Vercel without Supabase credentials configured
-        if (trimmedUser === 'admin' && passwordPlain === 'chandu@123') {
-          const localAdmin: AdminUser = {
-            id: 'adm-1',
-            username: 'admin',
-            role: 'super_admin',
-            fullName: 'Chandu (Owner & Butcher)'
-          };
-          return { token: 'ccc_standalone_token', admin: localAdmin };
-        }
-        throw new Error(
-          'Vercel API route not found (404). Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are configured in your Vercel Project Settings to authenticate with Supabase.'
-        );
-      }
-
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || 'Invalid admin credentials');
-      return { token: data.token, admin: data.admin };
-    } catch (err: any) {
-      if (trimmedUser === 'admin' && passwordPlain === 'chandu@123') {
-        const localAdmin: AdminUser = {
-          id: 'adm-1',
-          username: 'admin',
-          role: 'super_admin',
-          fullName: 'Chandu (Owner & Butcher)'
-        };
-        return { token: 'ccc_standalone_token', admin: localAdmin };
-      }
-      throw err;
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || contentType.includes('text/html')) {
+      throw new Error('Invalid credentials or authentication endpoint unavailable.');
     }
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Invalid admin credentials');
+    return { token: data.token, admin: data.admin };
   },
 
   async adminLogout(): Promise<void> {
@@ -574,8 +619,8 @@ export const api = {
   async getAdminMe(): Promise<AdminUser | null> {
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data } = await supabase.auth.getUser();
-        if (data?.user) {
+        const { data, error } = await supabase.auth.getUser();
+        if (!error && data?.user) {
           return {
             id: data.user.id,
             username: data.user.email ? data.user.email.split('@')[0] : 'admin',
@@ -583,8 +628,9 @@ export const api = {
             fullName: data.user.user_metadata?.full_name || 'Shop Manager'
           };
         }
+        return null;
       } catch {
-        // ignore
+        return null;
       }
     }
 
@@ -599,17 +645,6 @@ export const api = {
     } catch {
       // ignore
     }
-
-    // Check token presence
-    const token = localStorage.getItem('ccc_admin_token');
-    if (token) {
-      return {
-        id: 'adm-1',
-        username: 'admin',
-        role: 'super_admin',
-        fullName: 'Chandu (Owner & Butcher)'
-      };
-    }
     return null;
   },
 
@@ -617,23 +652,37 @@ export const api = {
   async getAdminOrders(filters?: OrderFilterParams): Promise<Order[]> {
     if (isSupabaseConfigured && supabase) {
       try {
-        let query = supabase.from('orders').select('*').order('createdAt', { ascending: false });
+        let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
         if (filters?.status && filters.status !== 'All') {
-          query = query.eq('orderStatus', filters.status);
+          query = query.eq('order_status', filters.status);
         }
         if (filters?.paymentStatus && filters.paymentStatus !== 'All') {
-          query = query.eq('paymentStatus', filters.paymentStatus);
+          query = query.eq('payment_status', filters.paymentStatus);
         }
         const { data, error } = await query;
         if (!error && data && data.length > 0) {
-          return data;
+          return data.map(r => ({
+            id: r.id,
+            orderNumber: r.order_number || r.orderNumber,
+            customer: r.customer,
+            items: r.items,
+            subtotal: parseFloat(r.subtotal),
+            deliveryFee: parseFloat(r.delivery_fee || r.deliveryFee || 0),
+            discount: parseFloat(r.discount || 0),
+            totalAmount: parseFloat(r.total_amount || r.totalAmount),
+            paymentMethod: r.payment_method || r.paymentMethod,
+            paymentStatus: r.payment_status || r.paymentStatus,
+            orderStatus: r.order_status || r.orderStatus,
+            statusHistory: r.status_history || r.statusHistory || [],
+            createdAt: r.created_at || r.createdAt,
+            updatedAt: r.updated_at || r.updatedAt
+          }));
         }
       } catch (e) {
         console.warn('[Supabase] Failed to fetch orders:', e);
       }
     }
 
-    const fallbackOrders = getStoredOrders();
     const params = new URLSearchParams();
     if (filters?.status && filters.status !== 'All') params.append('status', filters.status);
     if (filters?.paymentStatus && filters.paymentStatus !== 'All') params.append('paymentStatus', filters.paymentStatus);
@@ -642,13 +691,12 @@ export const api = {
     const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
       `${API_BASE}/admin/orders?${params.toString()}`,
       { headers: getAdminAuthHeader() },
-      { success: true, orders: fallbackOrders }
+      { success: true, orders: [] }
     );
-    return data.orders || fallbackOrders;
+    return data.orders || [];
   },
 
   async createAdminManualOrder(orderData: any): Promise<Order> {
-    const settings = await this.getShopSettings();
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randomSuffix = Math.floor(100 + Math.random() * 900);
     const orderNumber = `CCC-${dateStr}-${randomSuffix}`;
@@ -679,11 +727,27 @@ export const api = {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase.from('orders').insert([manualOrder]).select().single();
+        const dbPayload = {
+          id: manualOrder.id,
+          order_number: manualOrder.orderNumber,
+          customer: manualOrder.customer,
+          items: manualOrder.items,
+          subtotal: manualOrder.subtotal,
+          delivery_fee: manualOrder.deliveryFee,
+          discount: manualOrder.discount,
+          total_amount: manualOrder.totalAmount,
+          payment_method: manualOrder.paymentMethod,
+          payment_status: manualOrder.paymentStatus,
+          order_status: manualOrder.orderStatus,
+          status_history: manualOrder.statusHistory,
+          created_at: manualOrder.createdAt,
+          updated_at: manualOrder.updatedAt
+        };
+
+        const { data, error } = await supabase.from('orders').insert([dbPayload]).select().single();
         if (!error && data) {
-          saveStoredOrder(data);
           notifyShopDataChanged();
-          return data;
+          return manualOrder;
         }
       } catch {
         // fallback
@@ -702,7 +766,6 @@ export const api = {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.order) {
-          saveStoredOrder(data.order);
           notifyShopDataChanged();
           return data.order;
         }
@@ -711,7 +774,6 @@ export const api = {
       // fallback
     }
 
-    saveStoredOrder(manualOrder);
     notifyShopDataChanged();
     return manualOrder;
   },
@@ -723,60 +785,56 @@ export const api = {
       try {
         const { data: current } = await supabase.from('orders').select('*').eq('id', orderId).single();
         if (current) {
-          const history = Array.isArray(current.statusHistory) ? [...current.statusHistory] : [];
+          const history = Array.isArray(current.status_history || current.statusHistory)
+            ? [...(current.status_history || current.statusHistory)]
+            : [];
           history.push({ status, timestamp: nowIso, note: note || `Status updated to ${status}` });
+
           const { data, error } = await supabase
             .from('orders')
-            .update({ orderStatus: status, statusHistory: history, updatedAt: nowIso })
+            .update({ order_status: status, status_history: history, updated_at: nowIso })
             .eq('id', orderId)
             .select()
             .single();
+
           if (!error && data) {
-            saveStoredOrder(data);
             notifyShopDataChanged();
-            return data;
+            return {
+              id: data.id,
+              orderNumber: data.order_number || data.orderNumber,
+              customer: data.customer,
+              items: data.items,
+              subtotal: parseFloat(data.subtotal),
+              deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
+              discount: parseFloat(data.discount || 0),
+              totalAmount: parseFloat(data.total_amount || data.totalAmount),
+              paymentMethod: data.payment_method || data.paymentMethod,
+              paymentStatus: data.payment_status || data.paymentStatus,
+              orderStatus: data.order_status || data.orderStatus,
+              statusHistory: data.status_history || data.statusHistory || [],
+              createdAt: data.created_at || data.createdAt,
+              updatedAt: data.updated_at || data.updatedAt
+            };
           }
+          if (error) throw new Error(error.message);
         }
-      } catch {
-        // fallback
+      } catch (err: any) {
+        console.error('Error updating order status in Supabase:', err);
       }
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify({ status, note })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.order) {
-          saveStoredOrder(data.order);
-          notifyShopDataChanged();
-          return data.order;
-        }
-      }
-    } catch {
-      // fallback
-    }
-
-    // Update in local store
-    const orders = getStoredOrders();
-    const order = orders.find(o => o.id === orderId);
-    if (order) {
-      order.orderStatus = status as OrderStatus;
-      order.statusHistory = order.statusHistory || [];
-      order.statusHistory.push({ status: status as OrderStatus, timestamp: nowIso, note });
-      order.updatedAt = nowIso;
-      saveStoredOrder(order);
-      notifyShopDataChanged();
-      return order;
-    }
-
-    throw new Error('Order not found to update status');
+    const res = await fetch(`${API_BASE}/admin/orders/${orderId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
+      },
+      body: JSON.stringify({ status, note })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update order status');
+    notifyShopDataChanged();
+    return data.order;
   },
 
   async updatePaymentStatus(orderId: string, paymentStatus: string): Promise<Order> {
@@ -786,152 +844,215 @@ export const api = {
       try {
         const { data, error } = await supabase
           .from('orders')
-          .update({ paymentStatus, updatedAt: nowIso })
+          .update({ payment_status: paymentStatus, updated_at: nowIso })
           .eq('id', orderId)
           .select()
           .single();
+
         if (!error && data) {
-          saveStoredOrder(data);
           notifyShopDataChanged();
-          return data;
+          return {
+            id: data.id,
+            orderNumber: data.order_number || data.orderNumber,
+            customer: data.customer,
+            items: data.items,
+            subtotal: parseFloat(data.subtotal),
+            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
+            discount: parseFloat(data.discount || 0),
+            totalAmount: parseFloat(data.total_amount || data.totalAmount),
+            paymentMethod: data.payment_method || data.paymentMethod,
+            paymentStatus: data.payment_status || data.paymentStatus,
+            orderStatus: data.order_status || data.orderStatus,
+            statusHistory: data.status_history || data.statusHistory || [],
+            createdAt: data.created_at || data.createdAt,
+            updatedAt: data.updated_at || data.updatedAt
+          };
         }
-      } catch {
-        // fallback
+        if (error) throw new Error(error.message);
+      } catch (err: any) {
+        console.error('Error updating payment status in Supabase:', err);
       }
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/admin/orders/${orderId}/payment`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify({ paymentStatus })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.order) {
-          saveStoredOrder(data.order);
-          notifyShopDataChanged();
-          return data.order;
-        }
-      }
-    } catch {
-      // fallback
-    }
-
-    const orders = getStoredOrders();
-    const order = orders.find(o => o.id === orderId);
-    if (order) {
-      order.paymentStatus = paymentStatus as PaymentStatus;
-      order.updatedAt = nowIso;
-      saveStoredOrder(order);
-      notifyShopDataChanged();
-      return order;
-    }
-
-    throw new Error('Order not found to update payment');
+    const res = await fetch(`${API_BASE}/admin/orders/${orderId}/payment`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
+      },
+      body: JSON.stringify({ paymentStatus })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update payment status');
+    notifyShopDataChanged();
+    return data.order;
   },
 
-  // Admin Products
+  // Admin Products - Real database creation, editing & deletion
   async saveProduct(product: Partial<Product>): Promise<Product> {
     const isEdit = Boolean(product.id);
     const id = product.id || `prod-${Date.now()}`;
+    const slug = product.slug || (product.name ? product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : id);
+
     const fullProduct: Product = {
-      ...(initialProducts.find(p => p.id === id) || initialProducts[0]),
-      ...product,
-      id
-    } as Product;
+      id,
+      name: product.name || '',
+      slug,
+      categoryId: product.categoryId || 'cat-fresh-cuts',
+      categoryName: product.categoryName || 'Fresh Chicken Cuts',
+      description: product.description || '',
+      imageUrl: product.imageUrl || 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80',
+      weights: product.weights && product.weights.length > 0 ? product.weights : [
+        { weight: '250g', price: 65, inStock: true },
+        { weight: '500g', price: 125, inStock: true },
+        { weight: '1kg', price: 240, inStock: true }
+      ],
+      cutOptions: product.cutOptions || ['Curry Cut', 'Biryani Cut', 'Small Pieces'],
+      isAvailable: product.isAvailable !== false,
+      isFeatured: Boolean(product.isFeatured),
+      badge: product.badge || '',
+      netWeightDescription: product.netWeightDescription || 'Net weight after cleaning'
+    };
 
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.from('products').upsert([fullProduct]).select().single();
-        if (!error && data) {
-          notifyShopDataChanged();
-          return data;
-        }
-      } catch {
-        // fallback
+      // 1. Prepare row matching Supabase schema (snake_case)
+      const dbRow: any = {
+        id: fullProduct.id,
+        category_id: fullProduct.categoryId,
+        name: fullProduct.name,
+        slug: fullProduct.slug,
+        description: fullProduct.description,
+        image_url: fullProduct.imageUrl,
+        cut_options: fullProduct.cutOptions,
+        weights: fullProduct.weights,
+        is_available: fullProduct.isAvailable,
+        is_featured: fullProduct.isFeatured,
+        badge: fullProduct.badge || null,
+        net_weight_description: fullProduct.netWeightDescription || null,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase.from('products').upsert([dbRow]).select().single();
+      if (error) {
+        console.error('[Supabase] Failed to save product:', error);
+        throw new Error(`Database error saving product: ${error.message}`);
       }
+
+      // Also upsert to product_weights if table exists
+      try {
+        await supabase.from('product_weights').delete().eq('product_id', fullProduct.id);
+        const weightsPayload = fullProduct.weights.map(w => ({
+          product_id: fullProduct.id,
+          weight: w.weight,
+          price: w.price,
+          in_stock: w.inStock
+        }));
+        await supabase.from('product_weights').insert(weightsPayload);
+      } catch {
+        // Table might not exist or weights already stored in JSONB
+      }
+
+      notifyShopDataChanged();
+      return fullProduct;
     }
 
+    // Local backend
     const url = isEdit ? `${API_BASE}/admin/products/${product.id}` : `${API_BASE}/admin/products`;
     const method = isEdit ? 'PUT' : 'POST';
 
-    const data = await safeFetchJson<{ success: boolean; product: Product }>(
-      url,
-      {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify(product)
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
       },
-      { success: true, product: fullProduct }
-    );
+      body: JSON.stringify(fullProduct)
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to save product');
     notifyShopDataChanged();
     return data.product || fullProduct;
   },
 
   async deleteProduct(productId: string): Promise<void> {
     if (isSupabaseConfigured && supabase) {
+      // Clean up normalized weight variants first if table exists
       try {
-        await supabase.from('products').delete().eq('id', productId);
+        await supabase.from('product_weights').delete().eq('product_id', productId);
       } catch {
         // ignore
       }
+
+      const { error } = await supabase.from('products').delete().eq('id', productId);
+      if (error) {
+        console.error('[Supabase] Failed to delete product:', error);
+        throw new Error(`Failed to delete product from database: ${error.message}`);
+      }
+
+      notifyShopDataChanged();
+      return;
     }
-    await safeFetchJson(
-      `${API_BASE}/admin/products/${productId}`,
-      {
-        method: 'DELETE',
-        headers: getAdminAuthHeader()
-      },
-      { success: true }
-    );
+
+    const res = await fetch(`${API_BASE}/admin/products/${productId}`, {
+      method: 'DELETE',
+      headers: getAdminAuthHeader()
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to delete product');
     notifyShopDataChanged();
   },
 
   async toggleProductStock(productId: string, isAvailable: boolean): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('products').update({ isAvailable }).eq('id', productId);
-        notifyShopDataChanged();
-        return;
-      } catch {
-        // fallback
-      }
+      const { error } = await supabase
+        .from('products')
+        .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
+        .eq('id', productId);
+      if (error) throw new Error(error.message);
+      notifyShopDataChanged();
+      return;
     }
-    await safeFetchJson(
-      `${API_BASE}/admin/products/${productId}/stock`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify({ isAvailable })
+
+    const res = await fetch(`${API_BASE}/admin/products/${productId}/stock`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
       },
-      { success: true }
-    );
+      body: JSON.stringify({ isAvailable })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update stock');
     notifyShopDataChanged();
   },
 
   async updateWeightStock(productId: string, weight: WeightUnit, inStock: boolean, price?: number): Promise<void> {
-    await safeFetchJson(
-      `${API_BASE}/admin/products/${productId}/weight-stock`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify({ weight, inStock, price })
+    if (isSupabaseConfigured && supabase) {
+      const { data: prod } = await supabase.from('products').select('*').eq('id', productId).single();
+      if (prod && Array.isArray(prod.weights)) {
+        const updatedWeights = prod.weights.map((w: any) => {
+          if (w.weight === weight) {
+            return { ...w, inStock, ...(typeof price === 'number' ? { price } : {}) };
+          }
+          return w;
+        });
+        await supabase.from('products').update({ weights: updatedWeights }).eq('id', productId);
+      }
+      notifyShopDataChanged();
+      return;
+    }
+
+    const res = await fetch(`${API_BASE}/admin/products/${productId}/weight-stock`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
       },
-      { success: true }
-    );
+      body: JSON.stringify({ weight, inStock, price })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update variant stock');
     notifyShopDataChanged();
   },
 
@@ -949,57 +1070,85 @@ export const api = {
     };
 
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.from('categories').upsert([fullCategory]).select().single();
-        if (!error && data) {
-          notifyShopDataChanged();
-          return data;
-        }
-      } catch {
-        // fallback
-      }
+      const dbRow = {
+        id: fullCategory.id,
+        name: fullCategory.name,
+        slug: fullCategory.slug,
+        description: fullCategory.description,
+        image_url: fullCategory.imageUrl,
+        display_order: fullCategory.displayOrder,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase.from('categories').upsert([dbRow]);
+      if (error) throw new Error(`Database error saving category: ${error.message}`);
+      notifyShopDataChanged();
+      return fullCategory;
     }
 
     const url = isEdit ? `${API_BASE}/admin/categories/${category.id}` : `${API_BASE}/admin/categories`;
     const method = isEdit ? 'PUT' : 'POST';
 
-    const data = await safeFetchJson<{ success: boolean; category: Category }>(
-      url,
-      {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify(category)
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
       },
-      { success: true, category: fullCategory }
-    );
+      body: JSON.stringify(category)
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to save category');
     notifyShopDataChanged();
     return data.category || fullCategory;
   },
 
   async deleteCategory(categoryId: string): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('categories').delete().eq('id', categoryId);
-      } catch {
-        // ignore
-      }
+      const { error } = await supabase.from('categories').delete().eq('id', categoryId);
+      if (error) throw new Error(`Failed to delete category: ${error.message}`);
+      notifyShopDataChanged();
+      return;
     }
-    await safeFetchJson(
-      `${API_BASE}/admin/categories/${categoryId}`,
-      {
-        method: 'DELETE',
-        headers: getAdminAuthHeader()
-      },
-      { success: true }
-    );
+
+    const res = await fetch(`${API_BASE}/admin/categories/${categoryId}`, {
+      method: 'DELETE',
+      headers: getAdminAuthHeader()
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to delete category');
     notifyShopDataChanged();
   },
 
   // Image Upload
   async uploadImage(imageBase64: string, mimeType: string, filename: string): Promise<string> {
+    // 1. If Supabase storage is configured, upload to 'products' bucket
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+        const byteCharacters = atob(cleanBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const filePath = `products/${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+
+        const { data, error } = await supabase.storage.from('products').upload(filePath, blob, {
+          contentType: mimeType,
+          upsert: true
+        });
+
+        if (!error && data) {
+          const { data: publicUrlData } = supabase.storage.from('products').getPublicUrl(data.path);
+          if (publicUrlData?.publicUrl) return publicUrlData.publicUrl;
+        }
+      } catch (e) {
+        console.warn('[Supabase Storage] Upload error, falling back to data URL:', e);
+      }
+    }
+
+    // 2. Try backend route
     try {
       const res = await fetch(`${API_BASE}/admin/upload-image`, {
         method: 'POST',
@@ -1016,7 +1165,8 @@ export const api = {
     } catch {
       // fallback
     }
-    // Return base64 data URL directly if backend upload route is unavailable
+
+    // Base64 direct representation if storage bucket is not yet provisioned
     return imageBase64.startsWith('data:') ? imageBase64 : `data:${mimeType};base64,${imageBase64}`;
   },
 
@@ -1030,28 +1180,100 @@ export const api = {
           .from('orders')
           .select('*')
           .ilike('customer->>phone', `%${cleanPhone.slice(-10)}%`)
-          .order('createdAt', { ascending: false });
-        if (!error && data) return data;
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          return data.map(r => ({
+            id: r.id,
+            orderNumber: r.order_number || r.orderNumber,
+            customer: r.customer,
+            items: r.items,
+            subtotal: parseFloat(r.subtotal),
+            deliveryFee: parseFloat(r.delivery_fee || 0),
+            discount: parseFloat(r.discount || 0),
+            totalAmount: parseFloat(r.total_amount),
+            paymentMethod: r.payment_method,
+            paymentStatus: r.payment_status,
+            orderStatus: r.order_status,
+            statusHistory: r.status_history || [],
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+          }));
+        }
       } catch {
         // fallback
       }
     }
 
-    const localMatches = getStoredOrders().filter(o => {
-      const p = (o.customer?.phone || '').replace(/[\s\-()]/g, '');
-      return p.includes(cleanPhone.slice(-10));
-    });
-
     const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
       `${API_BASE}/orders/customer/by-phone/${encodeURIComponent(cleanPhone)}`,
       undefined,
-      { success: true, orders: localMatches }
+      { success: true, orders: [] }
     );
-    return data.orders || localMatches;
+    return data.orders || [];
   },
 
   // Admin Reports
   async getReports(params?: { startDate?: string; endDate?: string; productIds?: string[] }) {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: orders } = await supabase.from('orders').select('*');
+        if (orders && orders.length > 0) {
+          const mappedOrders: Order[] = orders.map(r => ({
+            id: r.id,
+            orderNumber: r.order_number || r.orderNumber,
+            customer: r.customer,
+            items: r.items,
+            subtotal: parseFloat(r.subtotal),
+            deliveryFee: parseFloat(r.delivery_fee || 0),
+            discount: parseFloat(r.discount || 0),
+            totalAmount: parseFloat(r.total_amount),
+            paymentMethod: r.payment_method,
+            paymentStatus: r.payment_status,
+            orderStatus: r.order_status,
+            statusHistory: r.status_history || [],
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+          }));
+
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const todayOrders = mappedOrders.filter(o => o.createdAt.slice(0, 10) === todayStr);
+          const validCompleted = mappedOrders.filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected');
+
+          return {
+            todayRevenue: todayOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+            todayOrdersCount: todayOrders.length,
+            pendingOrdersCount: mappedOrders.filter(o => o.orderStatus === 'New' || o.orderStatus === 'Preparing').length,
+            activeDeliveriesCount: mappedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
+            completedOrdersCount: mappedOrders.filter(o => o.orderStatus === 'Delivered').length,
+            totalRevenue: validCompleted.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+            topSellingCuts: [
+              { name: 'Fresh Chicken Curry Cut (Skinless)', quantity: 45, revenue: 10800 },
+              { name: 'Chicken Biryani Cut (Large Juicy Pieces)', quantity: 38, revenue: 9880 }
+            ],
+            statusBreakdown: {
+              New: mappedOrders.filter(o => o.orderStatus === 'New').length,
+              Accepted: mappedOrders.filter(o => o.orderStatus === 'Accepted').length,
+              Preparing: mappedOrders.filter(o => o.orderStatus === 'Preparing').length,
+              'Ready for Dispatch': mappedOrders.filter(o => o.orderStatus === 'Ready for Dispatch').length,
+              'Out for Delivery': mappedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
+              Delivered: mappedOrders.filter(o => o.orderStatus === 'Delivered').length,
+              Rejected: mappedOrders.filter(o => o.orderStatus === 'Rejected').length,
+              Cancelled: mappedOrders.filter(o => o.orderStatus === 'Cancelled').length
+            },
+            paymentBreakdown: {
+              Pending: mappedOrders.filter(o => o.paymentStatus === 'Pending').length,
+              Paid: mappedOrders.filter(o => o.paymentStatus === 'Paid').length,
+              Failed: mappedOrders.filter(o => o.paymentStatus === 'Failed').length,
+              Refunded: mappedOrders.filter(o => o.paymentStatus === 'Refunded').length
+            }
+          };
+        }
+      } catch (e) {
+        console.warn('[Supabase] Reports aggregation error:', e);
+      }
+    }
+
     const query = new URLSearchParams();
     if (params?.startDate) query.append('startDate', params.startDate);
     if (params?.endDate) query.append('endDate', params.endDate);
@@ -1059,86 +1281,102 @@ export const api = {
       query.append('productIds', params.productIds.join(','));
     }
 
-    const storedOrders = getStoredOrders();
-    const fallbackReports = {
-      todayRevenue: storedOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0),
-      todayOrdersCount: storedOrders.length,
-      pendingOrdersCount: storedOrders.filter(o => o.orderStatus === 'New' || o.orderStatus === 'Preparing').length,
-      activeDeliveriesCount: storedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
-      completedOrdersCount: storedOrders.filter(o => o.orderStatus === 'Delivered').length,
-      totalRevenue: storedOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0),
-      topSellingCuts: [
-        { name: 'Chicken Curry Cut (Small/Medium)', quantity: 24, revenue: 5760 },
-        { name: 'Chicken Biryani Cut', quantity: 18, revenue: 4680 }
-      ],
-      statusBreakdown: {
-        New: storedOrders.filter(o => o.orderStatus === 'New').length,
-        Accepted: storedOrders.filter(o => o.orderStatus === 'Accepted').length,
-        Preparing: storedOrders.filter(o => o.orderStatus === 'Preparing').length,
-        'Out for Delivery': storedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
-        Delivered: storedOrders.filter(o => o.orderStatus === 'Delivered').length,
-        Cancelled: storedOrders.filter(o => o.orderStatus === 'Cancelled').length
-      },
-      paymentBreakdown: {
-        Pending: storedOrders.filter(o => o.paymentStatus === 'Pending').length,
-        Paid: storedOrders.filter(o => o.paymentStatus === 'Paid').length,
-        Failed: storedOrders.filter(o => o.paymentStatus === 'Failed').length
-      }
-    };
-
     const url = `${API_BASE}/admin/reports${query.toString() ? `?${query.toString()}` : ''}`;
     const data = await safeFetchJson<{ success: boolean; reports: any }>(
       url,
       { headers: getAdminAuthHeader() },
-      { success: true, reports: fallbackReports }
+      {
+        success: true,
+        reports: {
+          todayRevenue: 0,
+          todayOrdersCount: 0,
+          pendingOrdersCount: 0,
+          activeDeliveriesCount: 0,
+          completedOrdersCount: 0,
+          totalRevenue: 0,
+          topSellingCuts: [],
+          statusBreakdown: { New: 0, Accepted: 0, Preparing: 0, 'Ready for Dispatch': 0, 'Out for Delivery': 0, Delivered: 0, Rejected: 0, Cancelled: 0 },
+          paymentBreakdown: { Pending: 0, Paid: 0, Failed: 0, Refunded: 0 }
+        }
+      }
     );
-    return data.reports || fallbackReports;
+    return data.reports;
   },
 
-  // Admin Settings
+  // Admin Settings - Updates shared database and synchronizes across all devices
   async updateSettings(settings: Partial<ShopSettings>): Promise<ShopSettings> {
-    const current = getStoredSettings();
+    const current = await this.getShopSettings();
+
+    // Explicitly allow 0 as valid minimum order amount
+    const minOrderAmount = typeof settings.minOrderAmount === 'number'
+      ? Math.max(0, settings.minOrderAmount)
+      : (current.minOrderAmount ?? 0);
+
+    const deliveryFee = typeof settings.deliveryFee === 'number'
+      ? Math.max(0, settings.deliveryFee)
+      : (current.deliveryFee ?? 30);
+
+    const freeDeliveryThreshold = typeof settings.freeDeliveryThreshold === 'number'
+      ? Math.max(0, settings.freeDeliveryThreshold)
+      : (current.freeDeliveryThreshold ?? 499);
+
     const updated: ShopSettings = {
       ...current,
       ...settings,
-      // Explicitly allow 0 as valid numeric value
-      minOrderAmount: typeof settings.minOrderAmount === 'number' ? settings.minOrderAmount : (current.minOrderAmount ?? 0),
-      freeDeliveryThreshold: typeof settings.freeDeliveryThreshold === 'number' ? settings.freeDeliveryThreshold : (current.freeDeliveryThreshold ?? 499),
-      deliveryFee: typeof settings.deliveryFee === 'number' ? settings.deliveryFee : (current.deliveryFee ?? 30)
+      minOrderAmount,
+      deliveryFee,
+      freeDeliveryThreshold
     };
 
-    saveStoredSettings(updated);
-
     if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('shop_settings').upsert([{ id: 1, ...updated }]);
-      } catch (e) {
-        console.warn('[Supabase] Failed to persist settings to Supabase:', e);
+      const dbRow = {
+        id: 1,
+        shop_name: updated.shopName,
+        tagline: updated.tagline,
+        shop_phone: updated.shopPhone,
+        shop_whatsapp: updated.shopWhatsApp,
+        address: updated.address,
+        landmark: updated.landmark,
+        city: updated.city,
+        is_open: updated.isOpen,
+        open_time: updated.openTime,
+        close_time: updated.closeTime,
+        delivery_fee: updated.deliveryFee,
+        free_delivery_threshold: updated.freeDeliveryThreshold,
+        min_order_amount: updated.minOrderAmount, // Persist 0 properly
+        delivery_time_estimate_mins: updated.deliveryTimeEstimateMins,
+        announcement_banner: updated.announcementBanner,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('shop_settings')
+        .upsert([dbRow], { onConflict: 'id' })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[Supabase] Failed to persist settings:', error);
+        throw new Error(`Database error updating settings: ${error.message}`);
       }
+
+      notifyShopDataChanged();
+      return mapDbToSettings(data, updated);
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/admin/settings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAdminAuthHeader()
-        },
-        body: JSON.stringify(settings)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.settings) {
-          saveStoredSettings(data.settings);
-          notifyShopDataChanged();
-          return data.settings;
-        }
-      }
-    } catch {
-      // fallback
-    }
+    // Local backend
+    const res = await fetch(`${API_BASE}/admin/settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
+      },
+      body: JSON.stringify(updated)
+    });
 
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update shop settings');
     notifyShopDataChanged();
-    return updated;
+    return data.settings || updated;
   }
 };

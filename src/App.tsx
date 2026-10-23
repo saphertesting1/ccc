@@ -53,10 +53,10 @@ function MobileHardwareBackController() {
 // Public Customer Layout Wrapper
 function CustomerLayout() {
   return (
-    <div className="min-h-screen flex flex-col bg-[#FFF9F1] text-[#38251F]">
+    <div className="min-h-screen flex flex-col bg-[#FFF9F1] text-[#38251F] overflow-x-hidden">
       <NetworkStatus />
       <Navbar />
-      <main className="flex-1">
+      <main className="flex-1 overflow-x-hidden">
         <Outlet />
       </main>
       <Footer />

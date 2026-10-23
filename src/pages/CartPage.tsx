@@ -28,7 +28,7 @@ export default function CartPage() {
   const { settings } = useShop();
   const navigate = useNavigate();
 
-  const minOrderAmount = typeof settings?.minOrderAmount === 'number' ? settings.minOrderAmount : 150;
+  const minOrderAmount = typeof settings?.minOrderAmount === 'number' ? settings.minOrderAmount : 0;
   const isBelowMinOrder = minOrderAmount > 0 && subtotal < minOrderAmount;
 
   if (cart.length === 0) {

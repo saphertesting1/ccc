@@ -1028,12 +1028,88 @@ export class PostgresDatabaseRepository implements IDatabaseRepository {
 
   async getShopSettings(): Promise<ShopSettings> {
     if (!this.pool) return this.fallbackMemory.getShopSettings();
-    return this.fallbackMemory.getShopSettings();
+    try {
+      const res = await this.pool.query('SELECT * FROM shop_settings WHERE id = 1');
+      if (res.rows.length === 0) return this.fallbackMemory.getShopSettings();
+      const r = res.rows[0];
+      return {
+        shopName: r.shop_name,
+        tagline: r.tagline,
+        shopPhone: r.shop_phone,
+        shopWhatsApp: r.shop_whatsapp,
+        address: r.address,
+        landmark: r.landmark,
+        city: r.city,
+        isOpen: Boolean(r.is_open),
+        openTime: r.open_time,
+        closeTime: r.close_time,
+        deliveryFee: parseFloat(r.delivery_fee ?? 30),
+        freeDeliveryThreshold: parseFloat(r.free_delivery_threshold ?? 499),
+        minOrderAmount: parseFloat(r.min_order_amount ?? 0),
+        deliveryTimeEstimateMins: parseInt(r.delivery_time_estimate_mins ?? 45, 10),
+        announcementBanner: r.announcement_banner
+      };
+    } catch (e) {
+      console.warn('Postgres error reading shop_settings, using fallback:', e);
+      return this.fallbackMemory.getShopSettings();
+    }
   }
 
   async updateShopSettings(settings: Partial<ShopSettings>): Promise<ShopSettings> {
     if (!this.pool) return this.fallbackMemory.updateShopSettings(settings);
-    return this.fallbackMemory.updateShopSettings(settings);
+    try {
+      const current = await this.getShopSettings();
+      const updated: ShopSettings = {
+        ...current,
+        ...settings,
+        minOrderAmount: typeof settings.minOrderAmount === 'number' ? settings.minOrderAmount : (current.minOrderAmount ?? 0),
+        freeDeliveryThreshold: typeof settings.freeDeliveryThreshold === 'number' ? settings.freeDeliveryThreshold : (current.freeDeliveryThreshold ?? 499),
+        deliveryFee: typeof settings.deliveryFee === 'number' ? settings.deliveryFee : (current.deliveryFee ?? 30)
+      };
+
+      await this.pool.query(
+        `INSERT INTO shop_settings (id, shop_name, tagline, shop_phone, shop_whatsapp, address, landmark, city, is_open, open_time, close_time, delivery_fee, free_delivery_threshold, min_order_amount, delivery_time_estimate_mins, announcement_banner, updated_at)
+         VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           shop_name = EXCLUDED.shop_name,
+           tagline = EXCLUDED.tagline,
+           shop_phone = EXCLUDED.shop_phone,
+           shop_whatsapp = EXCLUDED.shop_whatsapp,
+           address = EXCLUDED.address,
+           landmark = EXCLUDED.landmark,
+           city = EXCLUDED.city,
+           is_open = EXCLUDED.is_open,
+           open_time = EXCLUDED.open_time,
+           close_time = EXCLUDED.close_time,
+           delivery_fee = EXCLUDED.delivery_fee,
+           free_delivery_threshold = EXCLUDED.free_delivery_threshold,
+           min_order_amount = EXCLUDED.min_order_amount,
+           delivery_time_estimate_mins = EXCLUDED.delivery_time_estimate_mins,
+           announcement_banner = EXCLUDED.announcement_banner,
+           updated_at = NOW()`,
+        [
+          updated.shopName,
+          updated.tagline,
+          updated.shopPhone,
+          updated.shopWhatsApp,
+          updated.address,
+          updated.landmark,
+          updated.city,
+          updated.isOpen,
+          updated.openTime,
+          updated.closeTime,
+          updated.deliveryFee,
+          updated.freeDeliveryThreshold,
+          updated.minOrderAmount,
+          updated.deliveryTimeEstimateMins,
+          updated.announcementBanner
+        ]
+      );
+      return updated;
+    } catch (e) {
+      console.warn('Postgres error writing shop_settings, falling back to memory:', e);
+      return this.fallbackMemory.updateShopSettings(settings);
+    }
   }
 
   async validateAdmin(username: string, passwordPlain: string): Promise<AdminUser | null> {
