@@ -571,11 +571,37 @@ export const api = {
           });
 
           if (!error && data?.user) {
+            // Verify authorization against public.admin_users using authenticated user UUID
+            const { data: adminRecord, error: adminQueryError } = await supabase
+              .from('admin_users')
+              .select('id, email, role')
+              .eq('id', data.user.id)
+              .maybeSingle();
+
+            if (adminQueryError) {
+              console.error('[Supabase] Error verifying admin authorization in admin_users:', adminQueryError);
+              await supabase.auth.signOut();
+              throw new Error(`Authorization check failed: ${adminQueryError.message}`);
+            }
+
+            if (!adminRecord) {
+              // User is authenticated in Supabase Auth, but NOT in public.admin_users
+              await supabase.auth.signOut();
+              throw new Error(
+                'Access denied: Your account credentials are valid, but your account is not authorized as an administrator. Please add your user UUID to the public.admin_users table.'
+              );
+            }
+
+            const verifiedRole: 'admin' | 'super_admin' =
+              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
+                ? adminRecord.role
+                : 'super_admin';
+
             const token = data.session?.access_token || `sb_${data.user.id}`;
             const adminObj: AdminUser = {
               id: data.user.id,
-              username: data.user.email ? data.user.email.split('@')[0] : input,
-              role: 'super_admin',
+              username: data.user.email ? data.user.email.split('@')[0] : (adminRecord.email ? adminRecord.email.split('@')[0] : input),
+              role: verifiedRole,
               fullName: data.user.user_metadata?.full_name || 'Shop Manager'
             };
             return { token, admin: adminObj };
@@ -584,6 +610,9 @@ export const api = {
             lastError = error.message;
           }
         } catch (e: any) {
+          if (e.message && (e.message.startsWith('Access denied:') || e.message.startsWith('Authorization check failed:'))) {
+            throw e;
+          }
           lastError = e.message || lastError;
         }
       }
@@ -632,12 +661,31 @@ export const api = {
       try {
         const { data, error } = await supabase.auth.getUser();
         if (!error && data?.user) {
-          return {
-            id: data.user.id,
-            username: data.user.email ? data.user.email.split('@')[0] : 'admin',
-            role: 'super_admin',
-            fullName: data.user.user_metadata?.full_name || 'Shop Manager'
-          };
+          // Verify authorization against public.admin_users using authenticated user UUID
+          const { data: adminRecord, error: adminErr } = await supabase
+            .from('admin_users')
+            .select('id, email, role')
+            .eq('id', data.user.id)
+            .maybeSingle();
+
+          if (!adminErr && adminRecord) {
+            const verifiedRole: 'admin' | 'super_admin' =
+              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
+                ? adminRecord.role
+                : 'super_admin';
+
+            return {
+              id: data.user.id,
+              username: data.user.email ? data.user.email.split('@')[0] : (adminRecord.email ? adminRecord.email.split('@')[0] : 'admin'),
+              role: verifiedRole,
+              fullName: data.user.user_metadata?.full_name || 'Shop Manager'
+            };
+          }
+
+          // User is authenticated in Supabase Auth, but NOT in public.admin_users
+          console.warn('[Supabase] Active session belongs to a user not authorized in public.admin_users');
+          await supabase.auth.signOut();
+          return null;
         }
         return null;
       } catch {
@@ -998,13 +1046,25 @@ export const api = {
         // ignore
       }
 
-      const { error } = await supabase.from('products').delete().eq('id', productId);
+      // Execute delete with .select('id') so PostgREST returns deleted records.
+      // This distinguishes a confirmed deletion from 0 rows affected due to RLS or missing product.
+      const { data, error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', productId)
+        .select('id');
+
       if (error) {
         console.error('[Supabase] Failed to delete product:', error);
         if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
           throw new Error('Supabase table "public.products" was not found in the schema cache. Please execute the complete supabase-setup.sql script in your Supabase SQL Editor to initialize the database tables and reload the schema cache.');
         }
         throw new Error(`Failed to delete product from database: ${error.message}`);
+      }
+
+      // If data is empty, 0 rows were deleted (either RLS blocked the delete or the product does not exist)
+      if (!data || data.length === 0) {
+        throw new Error('Deletion failed: No product was deleted. Either your account lacks administrator delete permissions (RLS policy) or the product does not exist.');
       }
 
       notifyShopDataChanged();

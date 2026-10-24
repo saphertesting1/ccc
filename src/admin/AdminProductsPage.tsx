@@ -81,7 +81,9 @@ export default function AdminProductsPage() {
       setActionSuccess('Product removed successfully. Historical order records remain intact.');
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (e: any) {
+      setProductToDelete(null);
       setActionError(e.message || 'Failed to delete product from database');
+      await loadProducts();
     } finally {
       setIsDeleting(false);
     }

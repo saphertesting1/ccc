@@ -123,7 +123,7 @@ export interface ShopSettings {
 export interface AdminUser {
   id: string;
   username: string;
-  role: 'super_admin' | 'shop_manager';
+  role: 'super_admin' | 'admin' | 'shop_manager';
   fullName?: string;
   token?: string;
 }
