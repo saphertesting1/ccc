@@ -707,6 +707,171 @@ export const api = {
     return null;
   },
 
+  // Admin Password Management
+  async requestPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new Error('Please enter a valid administrator email address.');
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const redirectTo = `${window.location.origin}/admin/reset-password`;
+        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+          redirectTo
+        });
+
+        if (error) {
+          console.warn('[Supabase] resetPasswordForEmail response:', error.message);
+          if (error.message?.toLowerCase().includes('rate limit')) {
+            throw new Error('Too many password reset requests. Please wait a few minutes before trying again.');
+          }
+        }
+
+        return {
+          success: true,
+          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
+        };
+      } catch (e: any) {
+        if (e.message?.includes('Too many password reset requests')) throw e;
+        return {
+          success: true,
+          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
+        };
+      }
+    }
+
+    // Local backend fallback
+    try {
+      const res = await fetch(`${API_BASE}/admin/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return { success: true, message: data.message || 'If an administrator account exists for this email, a password recovery link has been sent.' };
+      }
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
+    };
+  },
+
+  async resetPasswordWithRecovery(newPassword: string): Promise<{ success: boolean; message: string }> {
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData?.user) {
+        throw new Error('Password reset session has expired or is invalid. Please request a new recovery link from the admin login page.');
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (updateError) {
+        throw new Error(updateError.message || 'Failed to update password');
+      }
+
+      // Safely sign out the recovery session so admin can perform a fresh, authenticated login
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore
+      }
+
+      return {
+        success: true,
+        message: 'Your administrator password has been updated successfully. You can now log in with your new password.'
+      };
+    }
+
+    // Local backend fallback
+    const res = await fetch(`${API_BASE}/admin/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to update password');
+    }
+
+    return {
+      success: true,
+      message: 'Your administrator password has been updated successfully. You can now log in with your new password.'
+    };
+  },
+
+  async changeAdminPassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    if (!currentPassword) {
+      throw new Error('Please enter your current password.');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+    if (currentPassword === newPassword) {
+      throw new Error('New password must be different from your current password.');
+    }
+
+    if (isSupabaseConfigured && supabase) {
+      // 1. Get current authenticated user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user?.email) {
+        throw new Error('Unable to verify active administrator session. Please sign in again.');
+      }
+
+      // 2. Re-authenticate with current password to verify identity securely
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword
+      });
+      if (verifyError) {
+        throw new Error('Current password is incorrect. Please verify your current password.');
+      }
+
+      // 3. Update password in Supabase Auth
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+      if (updateError) {
+        throw new Error(updateError.message || 'Failed to update password');
+      }
+
+      return {
+        success: true,
+        message: 'Administrator password changed successfully.'
+      };
+    }
+
+    // Local backend fallback
+    const res = await fetch(`${API_BASE}/admin/change-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAdminAuthHeader()
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to change password');
+    }
+
+    return {
+      success: true,
+      message: 'Administrator password changed successfully.'
+    };
+  },
+
   // Admin Orders
   async getAdminOrders(filters?: OrderFilterParams): Promise<Order[]> {
     if (isSupabaseConfigured && supabase) {

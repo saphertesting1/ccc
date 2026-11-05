@@ -5,6 +5,7 @@ import {
   Route, 
   Navigate, 
   useLocation, 
+  useNavigate,
   Outlet 
 } from 'react-router-dom';
 
@@ -30,6 +31,7 @@ import OrderStatusPage from './pages/OrderStatusPage.js';
 
 import AdminLayout from './admin/AdminLayout.js';
 import AdminLoginPage from './admin/AdminLoginPage.js';
+import AdminResetPasswordPage from './admin/AdminResetPasswordPage.js';
 import AdminDashboardPage from './admin/AdminDashboardPage.js';
 import AdminOrdersPage from './admin/AdminOrdersPage.js';
 import AdminProductsPage from './admin/AdminProductsPage.js';
@@ -47,6 +49,26 @@ function ScrollToTop() {
 
 function MobileHardwareBackController() {
   useBackButton();
+  return null;
+}
+
+// Intercepts recovery email callbacks even if Supabase redirects to site root (/)
+function RecoveryRedirectWatcher() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+
+    const isRecoveryHash = hash.includes('type=recovery') || (hash.includes('access_token=') && !location.pathname.startsWith('/admin'));
+    const isRecoverySearch = search.includes('type=recovery');
+
+    if ((isRecoveryHash || isRecoverySearch) && !location.pathname.startsWith('/admin/reset-password')) {
+      navigate(`/admin/reset-password${search}${hash}`, { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   return null;
 }
 
@@ -73,6 +95,7 @@ export default function App() {
           <AdminAuthProvider>
             <ScrollToTop />
             <MobileHardwareBackController />
+            <RecoveryRedirectWatcher />
 
             <Routes>
               {/* Customer Public Routes */}
@@ -91,6 +114,8 @@ export default function App() {
 
               {/* Admin Portal Routes */}
               <Route path="/admin/login" element={<AdminLoginPage />} />
+              <Route path="/admin/reset-password" element={<AdminResetPasswordPage />} />
+              <Route path="/reset-password" element={<Navigate to="/admin/reset-password" replace />} />
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<Navigate to="/admin/dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboardPage />} />

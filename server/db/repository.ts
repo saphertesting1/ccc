@@ -50,6 +50,7 @@ export interface IDatabaseRepository {
   // Admin Auth
   validateAdmin(username: string, passwordPlain: string): Promise<AdminUser | null>;
   getAdminById(id: string): Promise<AdminUser | null>;
+  updateAdminPassword(adminId: string, currentPasswordPlain: string, newPasswordPlain: string): Promise<boolean>;
 
   // Customer order history
   getOrdersByCustomerPhone(phone: string): Promise<Order[]>;
@@ -530,6 +531,29 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
       return { id: 'admin-1', username: 'admin', role: 'super_admin' };
     }
     return null;
+  }
+
+  async updateAdminPassword(adminId: string, currentPasswordPlain: string, newPasswordPlain: string): Promise<boolean> {
+    const admin = this.admins.find(a => a.id === adminId);
+    if (!admin) {
+      if (adminId === 'admin-1' && currentPasswordPlain === 'chandu@123') {
+        this.admins.push({
+          id: 'admin-1',
+          username: 'admin',
+          role: 'super_admin',
+          passwordHash: newPasswordPlain
+        });
+        this.persist();
+        return true;
+      }
+      return false;
+    }
+    if (admin.passwordHash !== currentPasswordPlain) {
+      return false;
+    }
+    admin.passwordHash = newPasswordPlain;
+    this.persist();
+    return true;
   }
 
   async getOrdersByCustomerPhone(phone: string): Promise<Order[]> {
@@ -1120,6 +1144,11 @@ export class PostgresDatabaseRepository implements IDatabaseRepository {
   async getAdminById(id: string): Promise<AdminUser | null> {
     if (!this.pool) return this.fallbackMemory.getAdminById(id);
     return this.fallbackMemory.getAdminById(id);
+  }
+
+  async updateAdminPassword(adminId: string, currentPasswordPlain: string, newPasswordPlain: string): Promise<boolean> {
+    if (!this.pool) return this.fallbackMemory.updateAdminPassword(adminId, currentPasswordPlain, newPasswordPlain);
+    return this.fallbackMemory.updateAdminPassword(adminId, currentPasswordPlain, newPasswordPlain);
   }
 
   async getOrdersByCustomerPhone(phone: string): Promise<Order[]> {

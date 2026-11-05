@@ -210,7 +210,7 @@
       "isFeatured": false,
       "badge": "Party Starter",
       "netWeightDescription": "Clean trimmed bone tips.",
-      "updatedAt": "2026-10-24T02:05:13.799Z"
+      "updatedAt": "2026-11-05T15:35:16.177Z"
     },
     {
       "id": "prod-country-chicken",
@@ -327,6 +327,71 @@
     }
   ],
   "orders": [
+    {
+      "id": "ord-1793892916170-7931",
+      "orderNumber": "CCC-20261105-7931",
+      "idempotencyKey": "test-idem-1793892916170",
+      "customer": {
+        "name": "Anil Kumar",
+        "phone": "9848011223",
+        "address": "House 12-4, Market Road, Near Gandhi Statue",
+        "landmark": "Near Medical Hall",
+        "notes": ""
+      },
+      "items": [
+        {
+          "productId": "prod-curry-cut",
+          "productName": "Fresh Chicken Curry Cut (Skinless)",
+          "weight": "1kg",
+          "cutPreference": "Standard Curry Cut (12-16 pcs/kg)",
+          "unitPrice": 240,
+          "quantity": 2,
+          "subtotal": 480
+        }
+      ],
+      "subtotal": 480,
+      "deliveryFee": 30,
+      "discount": 0,
+      "totalAmount": 510,
+      "paymentMethod": "COD",
+      "paymentStatus": "Paid",
+      "orderStatus": "Delivered",
+      "statusHistory": [
+        {
+          "status": "New",
+          "timestamp": "2026-11-05T15:35:16.170Z",
+          "note": "Order placed by guest customer via online shop"
+        },
+        {
+          "status": "Accepted",
+          "timestamp": "2026-11-05T15:35:16.172Z",
+          "note": "Testing transition to Accepted"
+        },
+        {
+          "status": "Preparing",
+          "timestamp": "2026-11-05T15:35:16.173Z",
+          "note": "Testing transition to Preparing"
+        },
+        {
+          "status": "Ready for Dispatch",
+          "timestamp": "2026-11-05T15:35:16.173Z",
+          "note": "Testing transition to Ready for Dispatch"
+        },
+        {
+          "status": "Out for Delivery",
+          "timestamp": "2026-11-05T15:35:16.174Z",
+          "note": "Testing transition to Out for Delivery"
+        },
+        {
+          "status": "Delivered",
+          "timestamp": "2026-11-05T15:35:16.174Z",
+          "note": "Testing transition to Delivered"
+        }
+      ],
+      "createdAt": "2026-11-05T15:35:16.170Z",
+      "updatedAt": "2026-11-05T15:35:16.174Z",
+      "estimatedDeliveryTime": "45 mins"
+    },
     {
       "id": "ord-1792807513795-4896",
       "orderNumber": "CCC-20261024-4896",
