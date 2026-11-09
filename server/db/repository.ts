@@ -365,11 +365,16 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
       if (typeof price === 'number') {
         wOpt.price = price;
       }
-      product.updatedAt = new Date().toISOString();
-      this.persist();
-      return true;
+    } else {
+      product.weights.push({
+        weight,
+        inStock,
+        price: typeof price === 'number' ? Math.max(0, price) : 0
+      });
     }
-    return false;
+    product.updatedAt = new Date().toISOString();
+    this.persist();
+    return true;
   }
 
   // Orders

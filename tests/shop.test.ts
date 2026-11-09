@@ -223,7 +223,56 @@ async function runTestSuite() {
   assert.strictEqual(historicalOrder.items.length, 1, 'Historical order item snapshot must be intact');
   console.log('  ✅ Product CRUD and historical order immutability verified.');
 
-  console.log('\n🎉 ALL 10 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
+  // Test 11: Multi-Tier Weight Pack Pricing (250g, 500g, 1kg) for Admin Editing & Customer Cart
+  console.log('\n▶ Test 11: Product Weight Pack Price Configuration (250g, 500g, 1kg)');
+  const wholeChicken = await repo.getProductById('prod-whole-chicken');
+  assert(wholeChicken !== null, 'Whole chicken product must exist');
+  assert.strictEqual(wholeChicken.weights.length, 1, 'Originally whole chicken has 1kg only');
+  assert.strictEqual(wholeChicken.weights[0].price, 220, '1kg pack original price is 220');
+
+  // Admin configures 250g and 500g prices alongside 1kg:
+  const updatedWholeChicken = {
+    ...wholeChicken,
+    weights: [
+      { weight: '250g' as const, price: 60, inStock: true },
+      { weight: '500g' as const, price: 115, inStock: true },
+      { weight: '1kg' as const, price: 220, inStock: true }
+    ]
+  };
+  await repo.saveProduct(updatedWholeChicken);
+
+  // Verify persistence and retrieval
+  const reloadedWhole = await repo.getProductById('prod-whole-chicken');
+  assert(reloadedWhole !== null, 'Reloaded product must exist');
+  assert.strictEqual(reloadedWhole.weights.length, 3, 'Must now have all 3 weight packs configured');
+
+  const w250Check = reloadedWhole.weights.find(w => w.weight === '250g');
+  const w500Check = reloadedWhole.weights.find(w => w.weight === '500g');
+  const w1kgCheck = reloadedWhole.weights.find(w => w.weight === '1kg');
+
+  assert(w250Check && w250Check.price === 60, '250g pack price must be 60');
+  assert(w500Check && w500Check.price === 115, '500g pack price must be 115');
+  assert(w1kgCheck && w1kgCheck.price === 220, '1kg pack price must be 220');
+
+  // Test updating variant stock status & prices
+  await repo.updateWeightStock('prod-whole-chicken', '250g', false, 65);
+  const afterWeightStock = await repo.getProductById('prod-whole-chicken');
+  const updated250 = afterWeightStock?.weights.find(w => w.weight === '250g');
+  assert(updated250 && updated250.price === 65 && updated250.inStock === false, '250g must be updated with price 65 and inStock false');
+
+  // Verify product availability toggle preserves weights & prices intact
+  await repo.updateProductStock('prod-whole-chicken', false);
+  const afterDeactivate = await repo.getProductById('prod-whole-chicken');
+  assert(afterDeactivate?.isAvailable === false, 'Product isAvailable should be false');
+  assert.strictEqual(afterDeactivate?.weights.length, 3, 'Weights must remain intact after product availability toggle');
+
+  // Restore active status
+  await repo.updateProductStock('prod-whole-chicken', true);
+  await repo.updateWeightStock('prod-whole-chicken', '250g', true, 60);
+
+  console.log('  ✅ Weight pack pricing (250g, 500g, 1kg) save, edit, and stock toggle verified.');
+
+  console.log('\n🎉 ALL 11 AUTOMATED UNIT & INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
 }
 
 runTestSuite().catch(err => {

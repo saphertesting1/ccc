@@ -9,7 +9,8 @@ import {
   CreateOrderRequest,
   OrderFilterParams,
   AdminUser,
-  WeightUnit
+  WeightUnit,
+  WeightOption
 } from '../types/index.js';
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { initialCategories, initialProducts, initialShopSettings } from '../data/seedData.js';
@@ -140,6 +141,14 @@ function mapDbToProduct(r: any, categories: Category[]): Product {
       { weight: '500g', price: 125, inStock: true },
       { weight: '1kg', price: 240, inStock: true }
     ];
+  } else {
+    weights = weights
+      .filter((w: any) => w && w.weight && ['250g', '500g', '1kg'].includes(w.weight))
+      .map((w: any) => ({
+        weight: w.weight,
+        price: typeof w.price === 'number' ? Math.max(0, w.price) : (Math.max(0, parseFloat(String(w.price))) || 0),
+        inStock: w.inStock !== false && w.in_stock !== false
+      }));
   }
 
   let cutOptions = r.cut_options || r.cutOptions;
@@ -1278,6 +1287,20 @@ export const api = {
     const id = product.id || `prod-${Date.now()}`;
     const slug = product.slug || (product.name ? product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : id);
 
+    const sanitizedWeights: WeightOption[] = (Array.isArray(product.weights) && product.weights.length > 0)
+      ? product.weights
+          .filter((w: any) => w && w.weight && ['250g', '500g', '1kg'].includes(w.weight))
+          .map((w: any) => ({
+            weight: w.weight as WeightUnit,
+            price: typeof w.price === 'number' ? Math.max(0, w.price) : (Math.max(0, parseFloat(String(w.price))) || 0),
+            inStock: w.inStock !== false && w.in_stock !== false
+          }))
+      : [
+          { weight: '250g', price: 65, inStock: true },
+          { weight: '500g', price: 125, inStock: true },
+          { weight: '1kg', price: 240, inStock: true }
+        ];
+
     const fullProduct: Product = {
       id,
       name: product.name || '',
@@ -1286,11 +1309,7 @@ export const api = {
       categoryName: product.categoryName || 'Fresh Chicken Cuts',
       description: product.description || '',
       imageUrl: product.imageUrl || 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80',
-      weights: product.weights && product.weights.length > 0 ? product.weights : [
-        { weight: '250g', price: 65, inStock: true },
-        { weight: '500g', price: 125, inStock: true },
-        { weight: '1kg', price: 240, inStock: true }
-      ],
+      weights: sanitizedWeights,
       cutOptions: product.cutOptions || ['Curry Cut', 'Biryani Cut', 'Small Pieces'],
       isAvailable: product.isAvailable !== false,
       isFeatured: Boolean(product.isFeatured),
@@ -1438,13 +1457,31 @@ export const api = {
     if (isSupabaseConfigured && supabase) {
       const { data: prod } = await supabase.from('products').select('*').eq('id', productId).single();
       if (prod && Array.isArray(prod.weights)) {
-        const updatedWeights = prod.weights.map((w: any) => {
-          if (w.weight === weight) {
-            return { ...w, inStock, ...(typeof price === 'number' ? { price } : {}) };
-          }
-          return w;
-        });
-        await supabase.from('products').update({ weights: updatedWeights }).eq('id', productId);
+        const exists = prod.weights.some((w: any) => w.weight === weight);
+        const updatedWeights = exists
+          ? prod.weights.map((w: any) => {
+              if (w.weight === weight) {
+                return { ...w, inStock, ...(typeof price === 'number' ? { price: Math.max(0, price) } : {}) };
+              }
+              return w;
+            })
+          : [...prod.weights, { weight, inStock, price: typeof price === 'number' ? Math.max(0, price) : 0 }];
+        await supabase.from('products').update({ weights: updatedWeights, updated_at: new Date().toISOString() }).eq('id', productId);
+      }
+      try {
+        if (typeof price === 'number') {
+          await supabase.from('product_weights').upsert({
+            product_id: productId,
+            weight,
+            in_stock: inStock,
+            price: Math.max(0, price),
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'product_id,weight' });
+        } else {
+          await supabase.from('product_weights').update({ in_stock: inStock, updated_at: new Date().toISOString() }).match({ product_id: productId, weight });
+        }
+      } catch {
+        // Optional table
       }
       notifyShopDataChanged();
       return;

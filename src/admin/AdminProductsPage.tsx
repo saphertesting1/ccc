@@ -16,9 +16,11 @@ import {
   XCircle,
   RefreshCw
 } from 'lucide-react';
-import { Product, WeightUnit } from '../types/index.js';
+import { Product, WeightUnit, WeightOption } from '../types/index.js';
 import { api } from '../services/api.js';
 import { useShop } from '../context/ShopContext.js';
+
+const CANONICAL_WEIGHTS: WeightUnit[] = ['250g', '500g', '1kg'];
 
 export default function AdminProductsPage() {
   const { categories, refreshShopData } = useShop();
@@ -32,6 +34,18 @@ export default function AdminProductsPage() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
+
+  // Weight pack prices and stock states for the modal
+  const [priceInputs, setPriceInputs] = useState<Record<WeightUnit, string>>({
+    '250g': '',
+    '500g': '',
+    '1kg': ''
+  });
+  const [stockStates, setStockStates] = useState<Record<WeightUnit, boolean>>({
+    '250g': true,
+    '500g': true,
+    '1kg': true
+  });
 
   // In-app delete confirmation state
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
@@ -108,19 +122,41 @@ export default function AdminProductsPage() {
       isFeatured: false,
       netWeightDescription: 'Cleaned net meat weight'
     });
+    setPriceInputs({
+      '250g': '65',
+      '500g': '125',
+      '1kg': '240'
+    });
+    setStockStates({
+      '250g': true,
+      '500g': true,
+      '1kg': true
+    });
     setErrorMessage(null);
     setIsModalOpen(true);
   };
 
   const openEditModal = (p: Product) => {
-    setEditingProduct({ 
-      ...p,
-      weights: p.weights && p.weights.length > 0 ? p.weights : [
-        { weight: '250g', price: 65, inStock: true },
-        { weight: '500g', price: 125, inStock: true },
-        { weight: '1kg', price: 240, inStock: true }
-      ]
+    const initialPrices: Record<WeightUnit, string> = { '250g': '', '500g': '', '1kg': '' };
+    const initialStocks: Record<WeightUnit, boolean> = { '250g': true, '500g': true, '1kg': true };
+
+    const weightsList = Array.isArray(p.weights) ? p.weights : [];
+    CANONICAL_WEIGHTS.forEach(w => {
+      const found = weightsList.find(item => item.weight === w);
+      if (found) {
+        initialPrices[w] = typeof found.price === 'number' && found.price > 0 
+          ? String(found.price) 
+          : (found.price !== undefined && found.price !== null && String(found.price) !== '0' ? String(found.price) : '');
+        initialStocks[w] = found.inStock !== false;
+      } else {
+        initialPrices[w] = '';
+        initialStocks[w] = true;
+      }
     });
+
+    setEditingProduct({ ...p });
+    setPriceInputs(initialPrices);
+    setStockStates(initialStocks);
     setErrorMessage(null);
     setIsModalOpen(true);
   };
@@ -166,24 +202,42 @@ export default function AdminProductsPage() {
       return;
     }
 
-    const weights = editingProduct.weights || [];
-    if (weights.length === 0) {
-      setErrorMessage('At least one weight option (250g, 500g, or 1kg) is required.');
-      return;
+    // Assemble configured weights: only include weights where a valid price has been entered
+    const configuredWeights: WeightOption[] = [];
+
+    for (const w of CANONICAL_WEIGHTS) {
+      const priceStr = priceInputs[w]?.trim();
+      if (priceStr && priceStr !== '') {
+        const numPrice = parseInt(priceStr, 10);
+        if (isNaN(numPrice) || numPrice <= 0) {
+          setErrorMessage(`Please enter a valid price in rupees (greater than ₹0) for the ${w} pack, or leave the box empty if not offered.`);
+          return;
+        }
+        configuredWeights.push({
+          weight: w,
+          price: numPrice,
+          inStock: stockStates[w] !== false
+        });
+      }
     }
 
-    const hasInvalidPrice = weights.some(w => isNaN(Number(w.price)) || Number(w.price) < 0);
-    if (hasInvalidPrice) {
-      setErrorMessage('Please provide valid positive prices for all weight packs.');
+    if (configuredWeights.length === 0) {
+      setErrorMessage('Please configure a valid selling price for at least one weight pack (250g, 500g, or 1kg).');
       return;
     }
 
     try {
       setSaveLoading(true);
-      await api.saveProduct(editingProduct);
+      await api.saveProduct({
+        ...editingProduct,
+        name,
+        weights: configuredWeights
+      });
       setIsModalOpen(false);
       await loadProducts();
       await refreshShopData();
+      setActionSuccess(`Product "${name}" saved successfully with ${configuredWeights.length} weight option(s).`);
+      setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save product to database');
     } finally {
@@ -191,20 +245,20 @@ export default function AdminProductsPage() {
     }
   };
 
-  const handleWeightPriceChange = (weight: WeightUnit, price: number) => {
-    if (!editingProduct?.weights) return;
-    const weights = editingProduct.weights.map(w =>
-      w.weight === weight ? { ...w, price: Math.max(0, price) } : w
-    );
-    setEditingProduct({ ...editingProduct, weights });
+  const handlePriceChange = (weight: WeightUnit, val: string) => {
+    // Keep raw string allowing empty string or whole numbers
+    const cleanDigits = val.replace(/[^0-9]/g, '');
+    setPriceInputs(prev => ({
+      ...prev,
+      [weight]: cleanDigits
+    }));
   };
 
   const handleWeightStockToggle = (weight: WeightUnit) => {
-    if (!editingProduct?.weights) return;
-    const weights = editingProduct.weights.map(w =>
-      w.weight === weight ? { ...w, inStock: !w.inStock } : w
-    );
-    setEditingProduct({ ...editingProduct, weights });
+    setStockStates(prev => ({
+      ...prev,
+      [weight]: !prev[weight]
+    }));
   };
 
   return (
@@ -558,17 +612,15 @@ export default function AdminProductsPage() {
                     Available Weights & Prices (₹ INR) <span className="text-red-500">*</span>
                   </label>
                   <p className="text-[11px] text-stone-500">
-                    Set selling price and toggle availability for each weight pack.
+                    Enter selling price in Indian Rupees and toggle stock status for each pack size.
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {(['250g', '500g', '1kg'] as WeightUnit[]).map(weight => {
-                    const opt = editingProduct.weights?.find(w => w.weight === weight) || {
-                      weight,
-                      price: 0,
-                      inStock: true
-                    };
+                  {CANONICAL_WEIGHTS.map(weight => {
+                    const priceVal = priceInputs[weight] ?? '';
+                    const inStock = stockStates[weight] !== false;
+
                     return (
                       <div key={weight} className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-2">
                         <div className="flex items-center justify-between font-bold text-stone-800 text-xs">
@@ -576,23 +628,31 @@ export default function AdminProductsPage() {
                           <button
                             type="button"
                             onClick={() => handleWeightStockToggle(weight)}
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              opt.inStock ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+                              inStock ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' : 'bg-red-100 text-red-800 hover:bg-red-200'
                             }`}
                           >
-                            {opt.inStock ? 'In Stock' : 'Out of Stock'}
+                            {inStock ? 'In Stock' : 'Out of Stock'}
                           </button>
                         </div>
                         <div className="relative">
                           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold text-xs">₹</span>
                           <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={opt.price}
-                            onChange={e => handleWeightPriceChange(weight, parseFloat(e.target.value) || 0)}
-                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-bold text-[#D92332]"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="0"
+                            value={priceVal}
+                            onChange={e => handlePriceChange(weight, e.target.value)}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-bold text-[#D92332] focus:outline-hidden focus:border-[#D92332] focus:ring-1 focus:ring-[#D92332]"
                           />
+                        </div>
+                        <div className="text-[10px] text-stone-400 text-right">
+                          {priceVal && parseInt(priceVal, 10) > 0 ? (
+                            <span className="text-emerald-700 font-semibold">₹{parseInt(priceVal, 10)} / pack</span>
+                          ) : (
+                            <span>Leave empty if not offered</span>
+                          )}
                         </div>
                       </div>
                     );
