@@ -167,6 +167,131 @@ function mapDbToProduct(r: any, categories: Category[]): Product {
   };
 }
 
+// Helper to get formatted YYYY-MM-DD in Asia/Kolkata timezone (handles midnight and calendar dates correctly)
+export function getKolkataDateString(isoOrDate: string | Date = new Date()): string {
+  try {
+    const d = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
+    if (isNaN(d.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+  } catch {
+    return typeof isoOrDate === 'string' ? isoOrDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  }
+}
+
+// Helper to convert chicken pack weight string to numeric kilograms
+export function parseWeightToKg(weightStr: string | undefined): number {
+  if (!weightStr) return 0;
+  const clean = String(weightStr).toLowerCase().trim();
+  if (clean === '250g') return 0.25;
+  if (clean === '500g') return 0.50;
+  if (clean === '1kg') return 1.00;
+  if (clean.endsWith('kg')) {
+    const val = parseFloat(clean.replace('kg', ''));
+    return isNaN(val) ? 0 : val;
+  }
+  if (clean.endsWith('g')) {
+    const val = parseFloat(clean.replace('g', ''));
+    return isNaN(val) ? 0 : val / 1000;
+  }
+  return 0;
+}
+
+// Comprehensive database to Order mapper handling snake_case, camelCase, JSON items, and missing amounts
+export function mapDbToOrder(r: any): Order {
+  // Parse items safely
+  let items = r.items;
+  if (typeof items === 'string') {
+    try { items = JSON.parse(items); } catch {}
+  }
+  if (!Array.isArray(items)) {
+    items = [];
+  }
+
+  // Ensure items have full fields (subtotal, productName, weight, unitPrice, quantity)
+  const mappedItems: OrderItem[] = items.map((it: any) => {
+    const quantity = Math.max(1, Number(it.quantity) || 1);
+    const unitPrice = Math.max(0, Number(it.unitPrice ?? it.unit_price) || 0);
+    const subtotal = Number(it.subtotal) > 0 ? Number(it.subtotal) : unitPrice * quantity;
+    return {
+      productId: String(it.productId || it.product_id || ''),
+      productName: String(it.productName || it.product_name || 'Fresh Chicken Item'),
+      weight: (it.weight || '1kg') as WeightUnit,
+      cutPreference: String(it.cutPreference || it.cut_preference || 'Standard Curry Cut'),
+      unitPrice,
+      quantity,
+      subtotal
+    };
+  });
+
+  // Financial fields
+  const subtotal = Number(r.subtotal) > 0 
+    ? Number(r.subtotal) 
+    : mappedItems.reduce((sum, item) => sum + item.subtotal, 0);
+
+  const deliveryFee = Number(r.delivery_fee ?? r.deliveryFee ?? 0) || 0;
+  const discount = Number(r.discount ?? 0) || 0;
+
+  // Retrieve actual stored total amount, or fall back to calculation from items
+  let totalAmount = Number(r.total_amount ?? r.totalAmount ?? r.total ?? r.grand_total);
+  if (isNaN(totalAmount) || totalAmount <= 0) {
+    totalAmount = Math.max(0, subtotal + deliveryFee - discount);
+  }
+
+  // Parse customer info
+  let customer = r.customer;
+  if (typeof customer === 'string') {
+    try { customer = JSON.parse(customer); } catch {}
+  }
+  if (!customer || typeof customer !== 'object') {
+    customer = {
+      name: r.customer_name || 'Customer',
+      phone: r.customer_phone || '',
+      address: r.delivery_address || 'Home Delivery',
+      landmark: r.landmark || '',
+      notes: r.customer_notes || ''
+    };
+  }
+
+  // Parse status history
+  let statusHistory = r.status_history || r.statusHistory;
+  if (typeof statusHistory === 'string') {
+    try { statusHistory = JSON.parse(statusHistory); } catch {}
+  }
+  if (!Array.isArray(statusHistory)) {
+    statusHistory = [];
+  }
+
+  return {
+    id: String(r.id),
+    orderNumber: String(r.order_number || r.orderNumber || r.id),
+    customer: {
+      name: String(customer.name || 'Customer'),
+      phone: String(customer.phone || ''),
+      address: String(customer.address || ''),
+      landmark: customer.landmark ? String(customer.landmark) : '',
+      notes: customer.notes ? String(customer.notes) : ''
+    },
+    items: mappedItems,
+    subtotal,
+    deliveryFee,
+    discount,
+    totalAmount,
+    paymentMethod: r.payment_method || r.paymentMethod || 'COD',
+    paymentStatus: r.payment_status || r.paymentStatus || 'Pending',
+    orderStatus: r.order_status || r.orderStatus || 'New',
+    statusHistory,
+    createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
+    estimatedDeliveryTime: r.estimated_delivery_time || r.estimatedDeliveryTime,
+    idempotencyKey: r.idempotency_key || r.idempotencyKey
+  };
+}
+
 export const api = {
   // Public Products
   async getProducts(categoryId?: string, search?: string): Promise<Product[]> {
@@ -502,22 +627,7 @@ export const api = {
           .maybeSingle();
 
         if (!error && data) {
-          return {
-            id: data.id,
-            orderNumber: data.order_number || data.orderNumber,
-            customer: data.customer,
-            items: data.items,
-            subtotal: parseFloat(data.subtotal),
-            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
-            discount: parseFloat(data.discount || 0),
-            totalAmount: parseFloat(data.total_amount || data.totalAmount),
-            paymentMethod: data.payment_method || data.paymentMethod,
-            paymentStatus: data.payment_status || data.paymentStatus,
-            orderStatus: data.order_status || data.orderStatus,
-            statusHistory: data.status_history || data.statusHistory || [],
-            createdAt: data.created_at || data.createdAt,
-            updatedAt: data.updated_at || data.updatedAt
-          };
+          return mapDbToOrder(data);
         }
       } catch {
         // fallback
@@ -884,23 +994,50 @@ export const api = {
           query = query.eq('payment_status', filters.paymentStatus);
         }
         const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          return data.map(r => ({
-            id: r.id,
-            orderNumber: r.order_number || r.orderNumber,
-            customer: r.customer,
-            items: r.items,
-            subtotal: parseFloat(r.subtotal),
-            deliveryFee: parseFloat(r.delivery_fee || r.deliveryFee || 0),
-            discount: parseFloat(r.discount || 0),
-            totalAmount: parseFloat(r.total_amount || r.totalAmount),
-            paymentMethod: r.payment_method || r.paymentMethod,
-            paymentStatus: r.payment_status || r.paymentStatus,
-            orderStatus: r.order_status || r.orderStatus,
-            statusHistory: r.status_history || r.statusHistory || [],
-            createdAt: r.created_at || r.createdAt,
-            updatedAt: r.updated_at || r.updatedAt
-          }));
+        if (!error && data) {
+          let orders = data.map(mapDbToOrder);
+
+          // Apply date filter if provided (using Indian timezone)
+          if (filters?.startDate) {
+            orders = orders.filter(o => getKolkataDateString(o.createdAt) >= filters.startDate!);
+          }
+          if (filters?.endDate) {
+            orders = orders.filter(o => getKolkataDateString(o.createdAt) <= filters.endDate!);
+          }
+
+          // Apply search query across Order #, customer name, phone number, address, and product names
+          if (filters?.searchQuery && filters.searchQuery.trim()) {
+            const rawTerm = filters.searchQuery.trim();
+            const term = rawTerm.toLowerCase();
+            const digits = rawTerm.replace(/\D/g, '');
+
+            orders = orders.filter(o => {
+              if (o.orderNumber.toLowerCase().includes(term) || o.id.toLowerCase().includes(term)) {
+                return true;
+              }
+              if (o.customer.name.toLowerCase().includes(term)) {
+                return true;
+              }
+              if (o.customer.phone.toLowerCase().includes(term)) {
+                return true;
+              }
+              if (digits.length >= 3) {
+                const orderPhoneDigits = o.customer.phone.replace(/\D/g, '');
+                if (orderPhoneDigits.includes(digits) || digits.includes(orderPhoneDigits)) {
+                  return true;
+                }
+              }
+              if (o.customer.address.toLowerCase().includes(term) || (o.customer.landmark && o.customer.landmark.toLowerCase().includes(term))) {
+                return true;
+              }
+              if (o.items.some(item => item.productName.toLowerCase().includes(term))) {
+                return true;
+              }
+              return false;
+            });
+          }
+
+          return orders;
         }
       } catch (e) {
         console.warn('[Supabase] Failed to fetch orders:', e);
@@ -917,36 +1054,74 @@ export const api = {
       { headers: getAdminAuthHeader() },
       { success: true, orders: [] }
     );
-    return data.orders || [];
+    return (data.orders || []).map(mapDbToOrder);
   },
 
   async createAdminManualOrder(orderData: any): Promise<Order> {
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const nowIso = new Date().toISOString();
+    const dateStr = getKolkataDateString(nowIso).replace(/-/g, '');
     const randomSuffix = Math.floor(100 + Math.random() * 900);
     const orderNumber = `CCC-${dateStr}-${randomSuffix}`;
-    const nowIso = new Date().toISOString();
+
+    // Normalize items
+    const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
+    let calculatedSubtotal = 0;
+    const items: OrderItem[] = rawItems.map((item: any) => {
+      const quantity = Math.max(1, Number(item.quantity) || 1);
+      const unitPrice = Math.max(0, Number(item.unitPrice ?? item.unit_price) || 0);
+      const lineSubtotal = Number(item.subtotal) > 0 ? Number(item.subtotal) : unitPrice * quantity;
+      calculatedSubtotal += lineSubtotal;
+      return {
+        productId: String(item.productId || item.product_id || ''),
+        productName: String(item.productName || item.product_name || 'Fresh Chicken Item'),
+        weight: (item.weight || '1kg') as WeightUnit,
+        cutPreference: String(item.cutPreference || item.cut_preference || 'Standard Curry Cut'),
+        unitPrice,
+        quantity,
+        subtotal: lineSubtotal
+      };
+    });
+
+    const subtotal = Number(orderData.subtotal) > 0 ? Number(orderData.subtotal) : calculatedSubtotal;
+    const deliveryFee = Math.max(0, Number(orderData.deliveryFee) || 0);
+    const discount = Math.max(0, Number(orderData.discount) || 0);
+    const totalAmount = Number(orderData.totalAmount) > 0 
+      ? Number(orderData.totalAmount) 
+      : Math.max(0, subtotal + deliveryFee - discount);
+
+    const orderType = orderData.orderType || 'Walk-in';
+    const customerNotes = orderData.customer?.notes 
+      ? `${orderData.customer.notes} [Manual Order - ${orderType}]`
+      : `[Manual Order - ${orderType}]`;
 
     const manualOrder: Order = {
       id: `ord-${Date.now()}`,
       orderNumber,
-      customer: orderData.customer,
-      items: orderData.items || [],
-      subtotal: orderData.subtotal || 0,
-      deliveryFee: orderData.deliveryFee || 0,
-      discount: orderData.discount || 0,
-      totalAmount: orderData.totalAmount || 0,
-      paymentMethod: orderData.paymentMethod || 'COD',
-      paymentStatus: orderData.paymentStatus || 'Pending',
-      orderStatus: orderData.orderStatus || 'New',
+      customer: {
+        name: orderData.customer?.name?.trim() || 'Walk-in Customer',
+        phone: orderData.customer?.phone?.trim() || 'Counter Walk-in',
+        address: orderData.customer?.address?.trim() || (orderType === 'Home Delivery' ? 'Home Delivery' : 'In-store Counter / Walk-in'),
+        landmark: orderData.customer?.landmark?.trim() || '',
+        notes: customerNotes
+      },
+      items,
+      subtotal,
+      deliveryFee,
+      discount,
+      totalAmount,
+      paymentMethod: orderData.paymentMethod || 'Cash',
+      paymentStatus: orderData.paymentStatus || 'Paid',
+      orderStatus: orderData.orderStatus || 'Accepted',
       statusHistory: [
         {
-          status: orderData.orderStatus || 'New',
+          status: orderData.orderStatus || 'Accepted',
           timestamp: nowIso,
-          note: orderData.adminNotes || 'Order created manually by Admin'
+          note: `Manual order created by Admin (${orderType})`
         }
       ],
       createdAt: nowIso,
-      updatedAt: nowIso
+      updatedAt: nowIso,
+      idempotencyKey: `admin-${Date.now()}-${Math.floor(Math.random() * 10000)}`
     };
 
     if (isSupabaseConfigured && supabase) {
@@ -964,6 +1139,7 @@ export const api = {
           payment_status: manualOrder.paymentStatus,
           order_status: manualOrder.orderStatus,
           status_history: manualOrder.statusHistory,
+          idempotency_key: manualOrder.idempotencyKey,
           created_at: manualOrder.createdAt,
           updated_at: manualOrder.updatedAt
         };
@@ -971,10 +1147,15 @@ export const api = {
         const { data, error } = await supabase.from('orders').insert([dbPayload]).select().single();
         if (!error && data) {
           notifyShopDataChanged();
-          return manualOrder;
+          return mapDbToOrder(data);
         }
-      } catch {
-        // fallback
+        if (error) {
+          console.error('[Supabase] Manual order insert error:', error);
+          throw new Error(`Failed to save manual order in database: ${error.message}`);
+        }
+      } catch (err: any) {
+        if (err.message && err.message.startsWith('Failed to save manual order')) throw err;
+        console.warn('[Supabase] Manual order fallback to backend:', err);
       }
     }
 
@@ -985,13 +1166,20 @@ export const api = {
           'Content-Type': 'application/json',
           ...getAdminAuthHeader()
         },
-        body: JSON.stringify(orderData)
+        body: JSON.stringify({
+          ...orderData,
+          items,
+          subtotal,
+          deliveryFee,
+          discount,
+          totalAmount
+        })
       });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.order) {
           notifyShopDataChanged();
-          return data.order;
+          return mapDbToOrder(data.order);
         }
       }
     } catch {
@@ -1023,27 +1211,13 @@ export const api = {
 
           if (!error && data) {
             notifyShopDataChanged();
-            return {
-              id: data.id,
-              orderNumber: data.order_number || data.orderNumber,
-              customer: data.customer,
-              items: data.items,
-              subtotal: parseFloat(data.subtotal),
-              deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
-              discount: parseFloat(data.discount || 0),
-              totalAmount: parseFloat(data.total_amount || data.totalAmount),
-              paymentMethod: data.payment_method || data.paymentMethod,
-              paymentStatus: data.payment_status || data.paymentStatus,
-              orderStatus: data.order_status || data.orderStatus,
-              statusHistory: data.status_history || data.statusHistory || [],
-              createdAt: data.created_at || data.createdAt,
-              updatedAt: data.updated_at || data.updatedAt
-            };
+            return mapDbToOrder(data);
           }
           if (error) throw new Error(error.message);
         }
       } catch (err: any) {
         console.error('Error updating order status in Supabase:', err);
+        throw err;
       }
     }
 
@@ -1058,7 +1232,7 @@ export const api = {
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to update order status');
     notifyShopDataChanged();
-    return data.order;
+    return mapDbToOrder(data.order);
   },
 
   async updatePaymentStatus(orderId: string, paymentStatus: string): Promise<Order> {
@@ -1075,26 +1249,12 @@ export const api = {
 
         if (!error && data) {
           notifyShopDataChanged();
-          return {
-            id: data.id,
-            orderNumber: data.order_number || data.orderNumber,
-            customer: data.customer,
-            items: data.items,
-            subtotal: parseFloat(data.subtotal),
-            deliveryFee: parseFloat(data.delivery_fee || data.deliveryFee || 0),
-            discount: parseFloat(data.discount || 0),
-            totalAmount: parseFloat(data.total_amount || data.totalAmount),
-            paymentMethod: data.payment_method || data.paymentMethod,
-            paymentStatus: data.payment_status || data.paymentStatus,
-            orderStatus: data.order_status || data.orderStatus,
-            statusHistory: data.status_history || data.statusHistory || [],
-            createdAt: data.created_at || data.createdAt,
-            updatedAt: data.updated_at || data.updatedAt
-          };
+          return mapDbToOrder(data);
         }
         if (error) throw new Error(error.message);
       } catch (err: any) {
         console.error('Error updating payment status in Supabase:', err);
+        throw err;
       }
     }
 
@@ -1109,7 +1269,7 @@ export const api = {
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to update payment status');
     notifyShopDataChanged();
-    return data.order;
+    return mapDbToOrder(data.order);
   },
 
   // Admin Products - Real database creation, editing & deletion
@@ -1417,126 +1577,229 @@ export const api = {
     return imageBase64.startsWith('data:') ? imageBase64 : `data:${mimeType};base64,${imageBase64}`;
   },
 
-  // Customer Past Orders by Phone
+  // Customer Past Orders by Phone (Complete history with phone number normalization)
   async getCustomerOrdersByPhone(phone: string): Promise<Order[]> {
-    const cleanPhone = phone.replace(/[\s\-()]/g, '').trim();
+    const rawPhone = phone.trim();
+    const cleanDigits = rawPhone.replace(/\D/g, '');
+    const last10 = cleanDigits.slice(-10);
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // 1. First attempt secure RPC (safe for customer phone lookups without full table read)
-        const { data: rpcOrders, error: rpcError } = await supabase
-          .rpc('get_customer_orders_by_phone', { p_phone: cleanPhone });
-
-        if (!rpcError && rpcOrders && Array.isArray(rpcOrders)) {
-          return rpcOrders.map(r => ({
-            id: r.id,
-            orderNumber: r.order_number || r.orderNumber,
-            customer: r.customer,
-            items: r.items,
-            subtotal: parseFloat(r.subtotal),
-            deliveryFee: parseFloat(r.delivery_fee || 0),
-            discount: parseFloat(r.discount || 0),
-            totalAmount: parseFloat(r.total_amount),
-            paymentMethod: r.payment_method,
-            paymentStatus: r.payment_status,
-            orderStatus: r.order_status,
-            statusHistory: r.status_history || [],
-            createdAt: r.created_at,
-            updatedAt: r.updated_at
-          }));
-        }
-
-        // 2. Direct table query (for authenticated admins)
         const { data, error } = await supabase
           .from('orders')
           .select('*')
-          .ilike('customer->>phone', `%${cleanPhone.slice(-10)}%`)
           .order('created_at', { ascending: false });
 
         if (!error && data) {
-          return data.map(r => ({
-            id: r.id,
-            orderNumber: r.order_number || r.orderNumber,
-            customer: r.customer,
-            items: r.items,
-            subtotal: parseFloat(r.subtotal),
-            deliveryFee: parseFloat(r.delivery_fee || 0),
-            discount: parseFloat(r.discount || 0),
-            totalAmount: parseFloat(r.total_amount),
-            paymentMethod: r.payment_method,
-            paymentStatus: r.payment_status,
-            orderStatus: r.order_status,
-            statusHistory: r.status_history || [],
-            createdAt: r.created_at,
-            updatedAt: r.updated_at
-          }));
+          const allMapped = data.map(mapDbToOrder);
+          const matched = allMapped.filter(o => {
+            const oPhoneDigits = (o.customer.phone || '').replace(/\D/g, '');
+            if (last10 && last10.length >= 7) {
+              if (oPhoneDigits.endsWith(last10) || oPhoneDigits.includes(last10)) return true;
+            }
+            if (cleanDigits && (oPhoneDigits.includes(cleanDigits) || cleanDigits.includes(oPhoneDigits))) return true;
+            return o.customer.phone.toLowerCase().includes(rawPhone.toLowerCase());
+          });
+          return matched;
         }
-      } catch {
-        // fallback
+      } catch (e) {
+        console.warn('[Supabase] Customer orders by phone error:', e);
       }
     }
 
     const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
-      `${API_BASE}/orders/customer/by-phone/${encodeURIComponent(cleanPhone)}`,
+      `${API_BASE}/orders/customer/by-phone/${encodeURIComponent(rawPhone)}`,
       undefined,
       { success: true, orders: [] }
     );
-    return data.orders || [];
+    return (data.orders || []).map(mapDbToOrder);
   },
 
-  // Admin Reports
+  // Admin Reports (Issue 9 fix: complete aggregation with filterReport for Supabase & India timezone)
   async getReports(params?: { startDate?: string; endDate?: string; productIds?: string[] }) {
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: orders } = await supabase.from('orders').select('*');
-        if (orders && orders.length > 0) {
-          const mappedOrders: Order[] = orders.map(r => ({
-            id: r.id,
-            orderNumber: r.order_number || r.orderNumber,
-            customer: r.customer,
-            items: r.items,
-            subtotal: parseFloat(r.subtotal),
-            deliveryFee: parseFloat(r.delivery_fee || 0),
-            discount: parseFloat(r.discount || 0),
-            totalAmount: parseFloat(r.total_amount),
-            paymentMethod: r.payment_method,
-            paymentStatus: r.payment_status,
-            orderStatus: r.order_status,
-            statusHistory: r.status_history || [],
-            createdAt: r.created_at,
-            updatedAt: r.updated_at
+        const { data: rawOrders } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        if (rawOrders && rawOrders.length > 0) {
+          const allOrders: Order[] = rawOrders.map(mapDbToOrder);
+
+          const todayKolkata = getKolkataDateString(new Date());
+          const todayOrders = allOrders.filter(o => getKolkataDateString(o.createdAt) === todayKolkata);
+
+          const validNonCancelledOrders = allOrders.filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected');
+          const todayRevenue = todayOrders
+            .filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected')
+            .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+          const totalRevenue = validNonCancelledOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+          // Reporting date boundaries (in Asia/Kolkata timezone)
+          const startDate = params?.startDate || getKolkataDateString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+          const endDate = params?.endDate || todayKolkata;
+
+          // Target products
+          const isAllProducts = !params?.productIds || params.productIds.length === 0 || params.productIds.includes('all');
+          const selectedProductIds = isAllProducts ? [] : params!.productIds!;
+
+          // Filter orders in date range (excluding Cancelled & Rejected from sales totals)
+          const rangeOrders = allOrders.filter(o => {
+            const oDate = getKolkataDateString(o.createdAt);
+            return oDate >= startDate && oDate <= endDate;
+          });
+
+          const completedRangeOrders = rangeOrders.filter(
+            o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected'
+          );
+
+          // Aggregate product sales
+          const productBreakdownMap: Record<string, {
+            productId: string;
+            productName: string;
+            totalQuantity: number;
+            totalWeightKg: number;
+            displayWeight: string;
+            totalSalesValue: number;
+          }> = {};
+
+          let filterTotalQuantity = 0;
+          let filterTotalWeightKg = 0;
+          let filterTotalSalesValue = 0;
+
+          // Payment breakdown within the selected period
+          const filterPaymentBreakdown = {
+            COD: { count: 0, amount: 0 },
+            UPI: { count: 0, amount: 0, paidCount: 0, paidAmount: 0, pendingCount: 0, pendingAmount: 0 },
+            Cash: { count: 0, amount: 0 }
+          };
+
+          // Daily breakdown within the period
+          const dailyMap: Record<string, { date: string; orderCount: number; salesValue: number; weightKg: number }> = {};
+
+          for (const order of completedRangeOrders) {
+            filterTotalSalesValue += (order.totalAmount || 0);
+
+            // Payment method tally
+            if (order.paymentMethod === 'COD') {
+              filterPaymentBreakdown.COD.count++;
+              filterPaymentBreakdown.COD.amount += (order.totalAmount || 0);
+            } else if (order.paymentMethod === 'UPI') {
+              filterPaymentBreakdown.UPI.count++;
+              filterPaymentBreakdown.UPI.amount += (order.totalAmount || 0);
+              if (order.paymentStatus === 'Paid') {
+                filterPaymentBreakdown.UPI.paidCount++;
+                filterPaymentBreakdown.UPI.paidAmount += (order.totalAmount || 0);
+              } else {
+                filterPaymentBreakdown.UPI.pendingCount++;
+                filterPaymentBreakdown.UPI.pendingAmount += (order.totalAmount || 0);
+              }
+            } else {
+              filterPaymentBreakdown.Cash.count++;
+              filterPaymentBreakdown.Cash.amount += (order.totalAmount || 0);
+            }
+
+            // Daily breakdown
+            const oDate = getKolkataDateString(order.createdAt);
+            if (!dailyMap[oDate]) {
+              dailyMap[oDate] = { date: oDate, orderCount: 0, salesValue: 0, weightKg: 0 };
+            }
+            dailyMap[oDate].orderCount++;
+            dailyMap[oDate].salesValue += (order.totalAmount || 0);
+
+            // Items breakdown
+            for (const item of order.items) {
+              if (!isAllProducts && !selectedProductIds.includes(item.productId)) {
+                continue;
+              }
+
+              const pId = item.productId || item.productName;
+              if (!productBreakdownMap[pId]) {
+                productBreakdownMap[pId] = {
+                  productId: pId,
+                  productName: item.productName,
+                  totalQuantity: 0,
+                  totalWeightKg: 0,
+                  displayWeight: '',
+                  totalSalesValue: 0
+                };
+              }
+
+              const itemKg = parseWeightToKg(item.weight) * item.quantity;
+              productBreakdownMap[pId].totalQuantity += item.quantity;
+              productBreakdownMap[pId].totalWeightKg += itemKg;
+              productBreakdownMap[pId].totalSalesValue += (item.subtotal || 0);
+
+              filterTotalQuantity += item.quantity;
+              filterTotalWeightKg += itemKg;
+              dailyMap[oDate].weightKg += itemKg;
+            }
+          }
+
+          // Format product breakdown list
+          const productBreakdown = Object.values(productBreakdownMap).map(p => ({
+            ...p,
+            totalWeightKg: parseFloat(p.totalWeightKg.toFixed(2)),
+            displayWeight: p.totalWeightKg > 0 
+              ? `${p.totalWeightKg.toFixed(2)} kg (${p.totalQuantity} packs)` 
+              : `${p.totalQuantity} packs`
+          })).sort((a, b) => b.totalSalesValue - a.totalSalesValue);
+
+          // Daily details sorted by date
+          const dailyBreakdown = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
+
+          // Order details sorted by date desc
+          const orderBreakdown = completedRangeOrders.map(o => ({
+            id: o.id,
+            orderNumber: o.orderNumber,
+            createdAt: o.createdAt,
+            dateKolkata: getKolkataDateString(o.createdAt),
+            customerName: o.customer.name,
+            customerPhone: o.customer.phone,
+            totalAmount: o.totalAmount,
+            paymentMethod: o.paymentMethod,
+            paymentStatus: o.paymentStatus,
+            orderStatus: o.orderStatus,
+            itemCount: o.items.length
           }));
 
-          const todayStr = new Date().toISOString().slice(0, 10);
-          const todayOrders = mappedOrders.filter(o => o.createdAt.slice(0, 10) === todayStr);
-          const validCompleted = mappedOrders.filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected');
-
           return {
-            todayRevenue: todayOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+            todayRevenue,
             todayOrdersCount: todayOrders.length,
-            pendingOrdersCount: mappedOrders.filter(o => o.orderStatus === 'New' || o.orderStatus === 'Preparing').length,
-            activeDeliveriesCount: mappedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
-            completedOrdersCount: mappedOrders.filter(o => o.orderStatus === 'Delivered').length,
-            totalRevenue: validCompleted.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
-            topSellingCuts: [
-              { name: 'Fresh Chicken Curry Cut (Skinless)', quantity: 45, revenue: 10800 },
-              { name: 'Chicken Biryani Cut (Large Juicy Pieces)', quantity: 38, revenue: 9880 }
-            ],
+            pendingOrdersCount: allOrders.filter(o => o.orderStatus === 'New' || o.orderStatus === 'Preparing').length,
+            activeDeliveriesCount: allOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
+            completedOrdersCount: allOrders.filter(o => o.orderStatus === 'Delivered').length,
+            totalRevenue,
+            topSellingCuts: productBreakdown.slice(0, 5).map(p => ({
+              name: p.productName,
+              quantity: p.totalQuantity,
+              revenue: p.totalSalesValue
+            })),
             statusBreakdown: {
-              New: mappedOrders.filter(o => o.orderStatus === 'New').length,
-              Accepted: mappedOrders.filter(o => o.orderStatus === 'Accepted').length,
-              Preparing: mappedOrders.filter(o => o.orderStatus === 'Preparing').length,
-              'Ready for Dispatch': mappedOrders.filter(o => o.orderStatus === 'Ready for Dispatch').length,
-              'Out for Delivery': mappedOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
-              Delivered: mappedOrders.filter(o => o.orderStatus === 'Delivered').length,
-              Rejected: mappedOrders.filter(o => o.orderStatus === 'Rejected').length,
-              Cancelled: mappedOrders.filter(o => o.orderStatus === 'Cancelled').length
+              New: allOrders.filter(o => o.orderStatus === 'New').length,
+              Accepted: allOrders.filter(o => o.orderStatus === 'Accepted').length,
+              Preparing: allOrders.filter(o => o.orderStatus === 'Preparing').length,
+              'Ready for Dispatch': allOrders.filter(o => o.orderStatus === 'Ready for Dispatch').length,
+              'Out for Delivery': allOrders.filter(o => o.orderStatus === 'Out for Delivery').length,
+              Delivered: allOrders.filter(o => o.orderStatus === 'Delivered').length,
+              Rejected: allOrders.filter(o => o.orderStatus === 'Rejected').length,
+              Cancelled: allOrders.filter(o => o.orderStatus === 'Cancelled').length
             },
             paymentBreakdown: {
-              Pending: mappedOrders.filter(o => o.paymentStatus === 'Pending').length,
-              Paid: mappedOrders.filter(o => o.paymentStatus === 'Paid').length,
-              Failed: mappedOrders.filter(o => o.paymentStatus === 'Failed').length,
-              Refunded: mappedOrders.filter(o => o.paymentStatus === 'Refunded').length
+              Pending: allOrders.filter(o => o.paymentStatus === 'Pending').length,
+              Paid: allOrders.filter(o => o.paymentStatus === 'Paid').length,
+              Failed: allOrders.filter(o => o.paymentStatus === 'Failed').length,
+              Refunded: allOrders.filter(o => o.paymentStatus === 'Refunded').length
+            },
+            filterReport: {
+              startDate,
+              endDate,
+              totalOrdersCount: completedRangeOrders.length,
+              totalQuantitySold: filterTotalQuantity,
+              totalWeightSoldKg: parseFloat(filterTotalWeightKg.toFixed(2)),
+              totalSalesValue: filterTotalSalesValue,
+              productBreakdown,
+              paymentBreakdown: filterPaymentBreakdown,
+              dailyBreakdown,
+              orderBreakdown
             }
           };
         }

@@ -195,17 +195,21 @@ export default function AdminManualOrderModal({ isOpen, onClose, onOrderCreated 
         },
         items: items.map(item => ({
           productId: item.productId,
+          productName: item.productName,
           weight: item.weight,
           cutPreference: item.cutPreference,
-          unitPrice: item.unitPrice,
-          quantity: item.quantity
+          unitPrice: Number(item.unitPrice),
+          quantity: Number(item.quantity),
+          subtotal: Number(item.subtotal)
         })),
         orderType,
         paymentMethod,
         paymentStatus,
         orderStatus,
+        subtotal: Number(subtotal),
         deliveryFee: Math.max(0, Number(deliveryFee) || 0),
-        discount: Math.max(0, Number(discount) || 0)
+        discount: Math.max(0, Number(discount) || 0),
+        totalAmount: Number(totalAmount)
       };
 
       const createdOrder = await api.createAdminManualOrder(payload);

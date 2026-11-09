@@ -66,7 +66,7 @@ export default function AdminLayout() {
   return (
     <div className="min-h-screen bg-stone-100 flex flex-col text-[#38251F]">
       {/* Top Admin Header with Hamburger Menu */}
-      <header className="sticky top-0 z-30 bg-[#38251F] text-stone-200 border-b border-stone-800 shadow-md">
+      <header className="sticky top-0 z-30 bg-[#38251F] text-stone-200 border-b border-stone-800 shadow-md no-print">
         <div className="px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           {/* Left: Hamburger Button & Shop Brand */}
           <div className="flex items-center gap-3">
@@ -145,7 +145,7 @@ export default function AdminLayout() {
         {/* Mobile Backdrop Overlay */}
         {isMobileDrawerOpen && (
           <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-2xs z-40 md:hidden transition-opacity"
+            className="fixed inset-0 bg-black/60 backdrop-blur-2xs z-40 md:hidden transition-opacity no-print"
             onClick={() => setIsMobileDrawerOpen(false)}
             aria-hidden="true"
           />
@@ -156,7 +156,7 @@ export default function AdminLayout() {
           className={`
             fixed md:static inset-y-0 left-0 z-50 
             bg-[#38251F] text-stone-300 flex flex-col justify-between 
-            shadow-2xl md:shadow-lg transition-all duration-300 ease-in-out
+            shadow-2xl md:shadow-lg transition-all duration-300 ease-in-out no-print
             ${isMobileDrawerOpen ? 'translate-x-0 w-72' : '-translate-x-full md:translate-x-0'}
             ${isDesktopCollapsed ? 'md:w-20' : 'md:w-64'}
           `}
