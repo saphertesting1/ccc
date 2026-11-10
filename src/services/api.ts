@@ -78,34 +78,37 @@ async function safeFetchJson<T>(url: string, init?: RequestInit, fallbackData?: 
   }
 }
 
-// Helper to map DB record to ShopSettings (handles both snake_case and camelCase)
+// Helper to map DB record to ShopSettings (handles snake_case, camelCase, numeric strings, and zero thresholds)
 function mapDbToSettings(data: any, fallback: ShopSettings): ShopSettings {
   if (!data) return fallback;
 
-  // CRITICAL: 0 is a valid minimum order amount!
-  let minOrder = fallback.minOrderAmount ?? 0;
-  if (typeof data.min_order_amount === 'number' && !isNaN(data.min_order_amount)) {
-    minOrder = data.min_order_amount;
-  } else if (typeof data.minOrderAmount === 'number' && !isNaN(data.minOrderAmount)) {
-    minOrder = data.minOrderAmount;
-  } else if (data.min_order_amount !== undefined && data.min_order_amount !== null) {
-    const parsed = parseFloat(data.min_order_amount);
-    if (!isNaN(parsed)) minOrder = parsed;
-  }
+  const parseNumField = (val: any, defaultVal: number): number => {
+    if (val === undefined || val === null || val === '') return defaultVal;
+    const n = typeof val === 'number' ? val : parseFloat(String(val));
+    return isNaN(n) ? defaultVal : n;
+  };
 
-  let deliveryFee = fallback.deliveryFee ?? 30;
-  if (typeof data.delivery_fee === 'number' && !isNaN(data.delivery_fee)) {
-    deliveryFee = data.delivery_fee;
-  } else if (typeof data.deliveryFee === 'number' && !isNaN(data.deliveryFee)) {
-    deliveryFee = data.deliveryFee;
-  }
-
-  let freeDeliveryThreshold = fallback.freeDeliveryThreshold ?? 499;
-  if (typeof data.free_delivery_threshold === 'number' && !isNaN(data.free_delivery_threshold)) {
-    freeDeliveryThreshold = data.free_delivery_threshold;
-  } else if (typeof data.freeDeliveryThreshold === 'number' && !isNaN(data.freeDeliveryThreshold)) {
-    freeDeliveryThreshold = data.freeDeliveryThreshold;
-  }
+  const minOrder = parseNumField(
+    data.min_order_amount ?? data.minOrderAmount,
+    fallback.minOrderAmount ?? 0
+  );
+  const deliveryFee = parseNumField(
+    data.delivery_fee ?? data.deliveryFee,
+    fallback.deliveryFee ?? 30
+  );
+  const freeDeliveryThreshold = parseNumField(
+    data.free_delivery_threshold ?? data.freeDeliveryThreshold,
+    fallback.freeDeliveryThreshold ?? 499
+  );
+  const deliveryTimeEstimateMins = Math.max(
+    1,
+    Math.round(
+      parseNumField(
+        data.delivery_time_estimate_mins ?? data.deliveryTimeEstimateMins,
+        fallback.deliveryTimeEstimateMins ?? 45
+      )
+    )
+  );
 
   return {
     shopName: data.shop_name ?? data.shopName ?? fallback.shopName,
@@ -115,13 +118,13 @@ function mapDbToSettings(data: any, fallback: ShopSettings): ShopSettings {
     address: data.address ?? fallback.address,
     landmark: data.landmark ?? fallback.landmark,
     city: data.city ?? fallback.city,
-    isOpen: data.is_open !== undefined ? Boolean(data.is_open) : (data.isOpen !== undefined ? Boolean(data.isOpen) : fallback.isOpen),
+    isOpen: data.is_open !== undefined ? Boolean(data.is_open) : (data.isOpen !== undefined ? Boolean(data.isOpen) : (fallback.isOpen ?? true)),
     openTime: data.open_time ?? data.openTime ?? fallback.openTime,
     closeTime: data.close_time ?? data.closeTime ?? fallback.closeTime,
     deliveryFee,
     freeDeliveryThreshold,
     minOrderAmount: minOrder,
-    deliveryTimeEstimateMins: data.delivery_time_estimate_mins ?? data.deliveryTimeEstimateMins ?? fallback.deliveryTimeEstimateMins ?? 45,
+    deliveryTimeEstimateMins,
     announcementBanner: data.announcement_banner ?? data.announcementBanner ?? fallback.announcementBanner
   };
 }
@@ -470,6 +473,14 @@ export const api = {
 
   // Public Shop Settings
   async getShopSettings(): Promise<ShopSettings> {
+    let baselineFallback = initialShopSettings;
+    try {
+      const cached = localStorage.getItem('ccc_cached_settings');
+      if (cached) {
+        baselineFallback = mapDbToSettings(JSON.parse(cached), initialShopSettings);
+      }
+    } catch {}
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
@@ -479,7 +490,11 @@ export const api = {
           .maybeSingle();
 
         if (!error && data) {
-          return mapDbToSettings(data, initialShopSettings);
+          const mapped = mapDbToSettings(data, baselineFallback);
+          try {
+            localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
+          } catch {}
+          return mapped;
         }
       } catch (e) {
         console.warn('[Supabase] Failed to fetch shop_settings from database:', e);
@@ -489,9 +504,13 @@ export const api = {
     const data = await safeFetchJson<{ success: boolean; settings: ShopSettings }>(
       `${API_BASE}/settings?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, settings: initialShopSettings }
+      { success: true, settings: baselineFallback }
     );
-    return mapDbToSettings(data.settings, initialShopSettings);
+    const mapped = mapDbToSettings(data.settings, baselineFallback);
+    try {
+      localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
+    } catch {}
+    return mapped;
   },
 
   // Orders
@@ -611,35 +630,50 @@ export const api = {
 
   async getOrder(orderNumberOrId: string): Promise<Order> {
     const decoded = decodeURIComponent(orderNumberOrId).trim();
+    if (!decoded) {
+      throw new Error('Please enter a valid order number.');
+    }
+
+    // 1. Check local storage for customer order placed on this device
+    let localOrder: Order | null = null;
+    try {
+      const raw = localStorage.getItem('ccc_customer_orders');
+      if (raw) {
+        const list: Order[] = JSON.parse(raw);
+        localOrder = list.find(o => o.orderNumber === decoded || o.id === decoded) || null;
+      }
+    } catch {}
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // 1. First attempt secure RPC function (safe for public guest tracking without leaking other orders)
+        // 2. Attempt secure RPC function (safe for public guest tracking without leaking other customers' private data)
         const { data: rpcRows, error: rpcError } = await supabase
           .rpc('get_order_by_reference', { p_reference: decoded });
 
         const rpcOrder = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
-        if (!rpcError && rpcOrder) {
+        if (!rpcError && rpcOrder && (rpcOrder.order_number || rpcOrder.orderNumber)) {
           return {
-            id: rpcOrder.id || rpcOrder.order_number,
-            orderNumber: rpcOrder.order_number || rpcOrder.orderNumber,
-            customer: rpcOrder.customer || { name: '', phone: '', address: '', landmark: '' },
-            items: Array.isArray(rpcOrder.items) ? rpcOrder.items : [],
-            subtotal: rpcOrder.subtotal != null ? parseFloat(rpcOrder.subtotal) : 0,
-            deliveryFee: rpcOrder.delivery_fee != null ? parseFloat(rpcOrder.delivery_fee) : 0,
-            discount: rpcOrder.discount != null ? parseFloat(rpcOrder.discount) : 0,
-            totalAmount: rpcOrder.total_amount != null ? parseFloat(rpcOrder.total_amount) : 0,
-            paymentMethod: rpcOrder.payment_method || 'COD',
-            paymentStatus: rpcOrder.payment_status || 'Pending',
-            orderStatus: rpcOrder.order_status || 'New',
-            statusHistory: rpcOrder.status_history || [],
-            estimatedDeliveryTime: rpcOrder.estimated_delivery_time,
-            createdAt: rpcOrder.created_at || new Date().toISOString(),
-            updatedAt: rpcOrder.updated_at || new Date().toISOString()
+            id: rpcOrder.id || localOrder?.id || rpcOrder.order_number || decoded,
+            orderNumber: rpcOrder.order_number || rpcOrder.orderNumber || decoded,
+            customer: rpcOrder.customer || localOrder?.customer || { name: '', phone: '', address: '', landmark: '' },
+            items: (Array.isArray(rpcOrder.items) && rpcOrder.items.length > 0) ? rpcOrder.items : (localOrder?.items || []),
+            subtotal: rpcOrder.subtotal != null ? parseFloat(rpcOrder.subtotal) : (localOrder?.subtotal || 0),
+            deliveryFee: rpcOrder.delivery_fee != null ? parseFloat(rpcOrder.delivery_fee) : (localOrder?.deliveryFee || 0),
+            discount: rpcOrder.discount != null ? parseFloat(rpcOrder.discount) : (localOrder?.discount || 0),
+            totalAmount: rpcOrder.total_amount != null ? parseFloat(rpcOrder.total_amount) : (localOrder?.totalAmount || 0),
+            paymentMethod: rpcOrder.payment_method || localOrder?.paymentMethod || 'COD',
+            paymentStatus: rpcOrder.payment_status || localOrder?.paymentStatus || 'Pending',
+            orderStatus: rpcOrder.order_status || localOrder?.orderStatus || 'New',
+            statusHistory: (Array.isArray(rpcOrder.status_history) && rpcOrder.status_history.length > 0)
+              ? rpcOrder.status_history
+              : (localOrder?.statusHistory || []),
+            estimatedDeliveryTime: rpcOrder.estimated_delivery_time || localOrder?.estimatedDeliveryTime || '45 mins',
+            createdAt: rpcOrder.created_at || localOrder?.createdAt || new Date().toISOString(),
+            updatedAt: rpcOrder.updated_at || localOrder?.updatedAt || new Date().toISOString()
           };
         }
 
-        // 2. Direct table query (for authenticated admins with full RLS access)
+        // 3. Direct table query (for authenticated admins with full RLS access)
         const { data, error } = await supabase
           .from('orders')
           .select('*')
@@ -649,16 +683,30 @@ export const api = {
         if (!error && data) {
           return mapDbToOrder(data);
         }
-      } catch {
-        // fallback
+      } catch (e) {
+        console.warn('[Supabase] Error fetching order:', e);
       }
     }
 
-    const data = await safeFetchJson<{ success: boolean; order: Order }>(
-      `${API_BASE}/orders/${encodeURIComponent(decoded)}`
-    );
-    if (!data?.order) throw new Error('Order not found');
-    return data.order;
+    // 4. Return local customer order if found on this device
+    if (localOrder) {
+      return localOrder;
+    }
+
+    // 5. Safe attempt to contact backend server API (guaranteed never to throw "Unexpected HTML response")
+    try {
+      const data = await safeFetchJson<{ success: boolean; order: Order }>(
+        `${API_BASE}/orders/${encodeURIComponent(decoded)}`,
+        undefined,
+        null
+      );
+      if (data?.order) return data.order;
+    } catch {
+      // ignore network errors
+    }
+
+    // 6. Clean, user-facing error message
+    throw new Error(`Order "${decoded}" not found. Please verify your order number and try again.`);
   },
 
   // Payment Session
@@ -1632,39 +1680,101 @@ export const api = {
   // Customer Past Orders by Phone (Complete history with phone number normalization)
   async getCustomerOrdersByPhone(phone: string): Promise<Order[]> {
     const rawPhone = phone.trim();
+    if (!rawPhone) return [];
+
     const cleanDigits = rawPhone.replace(/\D/g, '');
     const last10 = cleanDigits.slice(-10);
 
+    const isMatch = (targetPhone: string | undefined): boolean => {
+      if (!targetPhone) return false;
+      const targetDigits = targetPhone.replace(/\D/g, '');
+      if (last10 && last10.length >= 7) {
+        if (targetDigits.endsWith(last10) || targetDigits.includes(last10)) return true;
+      }
+      if (cleanDigits && cleanDigits.length >= 5) {
+        if (targetDigits.includes(cleanDigits) || cleanDigits.includes(targetDigits)) return true;
+      }
+      return targetPhone.toLowerCase().includes(rawPhone.toLowerCase());
+    };
+
+    const ordersMap = new Map<string, Order>();
+
+    // 1. Check local storage for customer orders placed on this device
+    try {
+      const raw = localStorage.getItem('ccc_customer_orders');
+      if (raw) {
+        const localList: Order[] = JSON.parse(raw);
+        for (const o of localList) {
+          if (isMatch(o.customer?.phone)) {
+            ordersMap.set(o.orderNumber, o);
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Query Supabase with specific phone query conditions
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*')
-          .order('created_at', { ascending: false });
+        let query = supabase.from('orders').select('*');
+        if (last10 && last10.length >= 7) {
+          query = query.or(
+            `customer->>phone.ilike.%${last10}%,customer->>phone.ilike.%${cleanDigits}%,customer->>phone.eq.${rawPhone}`
+          );
+        } else if (cleanDigits) {
+          query = query.ilike('customer->>phone', `%${cleanDigits}%`);
+        }
+        query = query.order('created_at', { ascending: false });
 
-        if (!error && data) {
-          const allMapped = data.map(mapDbToOrder);
-          const matched = allMapped.filter(o => {
-            const oPhoneDigits = (o.customer.phone || '').replace(/\D/g, '');
-            if (last10 && last10.length >= 7) {
-              if (oPhoneDigits.endsWith(last10) || oPhoneDigits.includes(last10)) return true;
+        const { data, error } = await query;
+
+        if (!error && data && data.length > 0) {
+          const mapped = data.map(mapDbToOrder);
+          for (const mo of mapped) {
+            if (isMatch(mo.customer?.phone)) {
+              ordersMap.set(mo.orderNumber, mo);
             }
-            if (cleanDigits && (oPhoneDigits.includes(cleanDigits) || cleanDigits.includes(oPhoneDigits))) return true;
-            return o.customer.phone.toLowerCase().includes(rawPhone.toLowerCase());
-          });
-          return matched;
+          }
+        } else {
+          // Attempt RPC fallback if available
+          try {
+            const { data: rpcData } = await supabase.rpc('get_customer_orders_by_phone', {
+              p_phone: last10 || cleanDigits || rawPhone
+            });
+            if (rpcData && Array.isArray(rpcData)) {
+              for (const r of rpcData) {
+                const mo = mapDbToOrder(r);
+                ordersMap.set(mo.orderNumber, mo);
+              }
+            }
+          } catch {}
         }
       } catch (e) {
         console.warn('[Supabase] Customer orders by phone error:', e);
       }
     }
 
-    const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
-      `${API_BASE}/orders/customer/by-phone/${encodeURIComponent(rawPhone)}`,
-      undefined,
-      { success: true, orders: [] }
-    );
-    return (data.orders || []).map(mapDbToOrder);
+    // 3. Fallback to server API if available
+    try {
+      const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
+        `${API_BASE}/orders/customer/by-phone/${encodeURIComponent(rawPhone)}`,
+        undefined,
+        { success: true, orders: [] }
+      );
+      if (data?.orders && Array.isArray(data.orders)) {
+        for (const ro of data.orders) {
+          const mo = mapDbToOrder(ro);
+          if (isMatch(mo.customer?.phone)) {
+            ordersMap.set(mo.orderNumber, mo);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const result = Array.from(ordersMap.values());
+    result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return result;
   },
 
   // Admin Reports (Issue 9 fix: complete aggregation with filterReport for Supabase & India timezone)
@@ -1895,18 +2005,20 @@ export const api = {
 
     const parseNum = (val: any, fallbackVal: number): number => {
       if (val === undefined || val === null || val === '') return fallbackVal;
-      const n = Number(val);
+      const n = typeof val === 'number' ? val : parseFloat(String(val));
       return isNaN(n) ? fallbackVal : Math.max(0, n);
     };
 
     const minOrderAmount = parseNum(settings.minOrderAmount, current.minOrderAmount ?? 0);
     const deliveryFee = parseNum(settings.deliveryFee, current.deliveryFee ?? 30);
     const freeDeliveryThreshold = parseNum(settings.freeDeliveryThreshold, current.freeDeliveryThreshold ?? 499);
-    const deliveryTimeEstimateMins = Math.max(1, parseNum(settings.deliveryTimeEstimateMins, current.deliveryTimeEstimateMins ?? 45));
+    const deliveryTimeEstimateMins = Math.max(1, Math.round(parseNum(settings.deliveryTimeEstimateMins, current.deliveryTimeEstimateMins ?? 45)));
+    const isOpen = settings.isOpen !== undefined ? Boolean(settings.isOpen) : (current.isOpen ?? true);
 
     const updated: ShopSettings = {
       ...current,
       ...settings,
+      isOpen,
       minOrderAmount,
       deliveryFee,
       freeDeliveryThreshold,
@@ -1927,7 +2039,7 @@ export const api = {
         address: updated.address,
         landmark: updated.landmark,
         city: updated.city,
-        is_open: updated.isOpen,
+        is_open: Boolean(updated.isOpen),
         open_time: updated.openTime,
         close_time: updated.closeTime,
         delivery_fee: updated.deliveryFee,
@@ -1938,19 +2050,37 @@ export const api = {
         updated_at: new Date().toISOString()
       };
 
-      const { data, error } = await supabase
+      // 1. Try direct UPDATE on existing singleton row id = 1
+      let { data, error } = await supabase
         .from('shop_settings')
-        .upsert([dbRow], { onConflict: 'id' })
+        .update(dbRow)
+        .eq('id', 1)
         .select()
-        .single();
+        .maybeSingle();
+
+      // 2. If row did not exist yet, fallback to upsert
+      if (error || !data) {
+        const upsertRes = await supabase
+          .from('shop_settings')
+          .upsert([dbRow], { onConflict: 'id' })
+          .select()
+          .single();
+        data = upsertRes.data;
+        error = upsertRes.error;
+      }
 
       if (error) {
         console.error('[Supabase] Failed to persist settings:', error);
         throw new Error(`Database error updating settings: ${error.message}`);
       }
 
+      const saved = mapDbToSettings(data, updated);
+      try {
+        localStorage.setItem('ccc_cached_settings', JSON.stringify(saved));
+      } catch {}
+
       notifyShopDataChanged();
-      return mapDbToSettings(data, updated);
+      return saved;
     }
 
     // Local backend
@@ -1965,7 +2095,11 @@ export const api = {
 
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to update shop settings');
+    const saved = data.settings ? mapDbToSettings(data.settings, updated) : updated;
+    try {
+      localStorage.setItem('ccc_cached_settings', JSON.stringify(saved));
+    } catch {}
     notifyShopDataChanged();
-    return data.settings || updated;
+    return saved;
   }
 };

@@ -88,7 +88,7 @@ export default function HomePage() {
                   alt="Fresh Raw Chicken Cuts at Chandu Chicken Center"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex flex-col justify-end p-5 pb-8 sm:pb-7 text-white">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex flex-col justify-end p-5 text-white">
                   <span className="text-amber-400 text-xs font-bold uppercase tracking-wider">
                     Today's Fresh Batch
                   </span>
@@ -97,8 +97,8 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Floating Badge - Positioned cleanly without overlapping image caption */}
-              <div className="relative -mt-6 sm:absolute sm:-bottom-5 sm:left-4 bg-[#FFF9F1] text-[#38251F] p-3 rounded-2xl shadow-xl border border-amber-200 flex items-center gap-3 z-20">
+              {/* Delivery Badge - Positioned with proper spacing below image without covering photo or caption */}
+              <div className="mt-4 w-full max-w-sm bg-[#FFF9F1] text-[#38251F] p-3 rounded-2xl shadow-xl border border-amber-200 flex items-center gap-3 z-20">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
                   ⚡ 45m
                 </div>

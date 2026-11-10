@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Settings, 
   Store, 
@@ -23,6 +23,7 @@ import { ShopSettings } from '../types/index.js';
 export default function AdminSettingsPage() {
   const { settings, refreshShopData, updateLocalSettings } = useShop();
   const [formData, setFormData] = useState<Partial<ShopSettings>>({});
+  const isInitialized = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -39,8 +40,9 @@ export default function AdminSettingsPage() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !isInitialized.current) {
       setFormData({ ...settings });
+      isInitialized.current = true;
     }
   }, [settings]);
 
@@ -56,7 +58,7 @@ export default function AdminSettingsPage() {
       setFormData({ ...saved });
       await refreshShopData().catch(() => {});
       setSuccessMessage('Shop settings and delivery configurations updated successfully.');
-      setTimeout(() => setSuccessMessage(null), 3000);
+      setTimeout(() => setSuccessMessage(null), 3500);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to update settings');
     } finally {
