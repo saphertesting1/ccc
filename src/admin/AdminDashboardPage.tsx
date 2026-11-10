@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   ShoppingBag, 
@@ -21,35 +21,66 @@ import { api, getKolkataDateString } from '../services/api.js';
 import { Order, OrderStatus } from '../types/index.js';
 import { useShop } from '../context/ShopContext.js';
 
+export function getOrdersForKolkataDate(orders: Order[], date: string): Order[] {
+  return orders.filter(order => order.createdAt && getKolkataDateString(order.createdAt) === date);
+}
+
 export default function AdminDashboardPage() {
   const { settings, refreshShopData } = useShop();
   const todayKolkata = getKolkataDateString(new Date());
 
-  const [reports, setReports] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'All' | OrderStatus>('All');
+  const isMounted = useRef(false);
+  const isFetching = useRef(false);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
+    if (isFetching.current) return;
+    isFetching.current = true;
     try {
-      setIsLoading(true);
-      const [reportData, ordersData] = await Promise.all([
-        api.getReports(),
-        api.getAdminOrders()
-      ]);
-      setReports(reportData);
-      setOrders(ordersData);
+      if (isMounted.current) setIsLoading(true);
+      const ordersData = await api.getAdminOrders();
+      if (isMounted.current) {
+        setOrders(ordersData);
+        setLoadError(null);
+      }
     } catch (e) {
       console.error('Error loading dashboard data:', e);
+      if (isMounted.current) {
+        setLoadError(e instanceof Error ? e.message : 'Failed to load orders.');
+      }
     } finally {
-      setIsLoading(false);
+      isFetching.current = false;
+      if (isMounted.current) setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    isMounted.current = true;
+    void loadDashboardData();
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void loadDashboardData();
+      }
+    };
+    const intervalId = window.setInterval(() => {
+      void loadDashboardData();
+    }, 10000);
+
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    return () => {
+      isMounted.current = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [loadDashboardData]);
 
   const handleToggleShopOpen = async () => {
     if (!settings) return;
@@ -74,10 +105,10 @@ export default function AdminDashboardPage() {
   };
 
   // Derive operations metrics strictly for TODAY in Indian Standard Time (Asia/Kolkata)
-  const todayOrders = orders.filter(o => o.createdAt && getKolkataDateString(o.createdAt) === todayKolkata);
+  const todayOrders = getOrdersForKolkataDate(orders, todayKolkata);
   
   // 1. Today's orders count
-  const todayOrdersCount = reports?.todayOrdersCount ?? todayOrders.length;
+  const todayOrdersCount = todayOrders.length;
 
   // 2. Orders awaiting action (New orders placed today waiting for store acceptance)
   const ordersAwaitingAction = todayOrders.filter(o => o.orderStatus === 'New').length;
@@ -97,7 +128,7 @@ export default function AdminDashboardPage() {
   const calculatedTodaySales = todayOrders
     .filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected')
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
-  const todaySalesTotal = reports?.todayRevenue ?? calculatedTodaySales;
+  const todaySalesTotal = calculatedTodaySales;
 
   // Filtered today's orders by Status
   const displayedOrders = (statusFilter === 'All' 
@@ -266,6 +297,11 @@ export default function AdminDashboardPage() {
 
       {/* Recent Orders Table & List */}
       <div className="bg-white rounded-3xl border border-stone-200 shadow-xs overflow-hidden">
+        {loadError && (
+          <div role="alert" className="px-4 sm:px-6 py-3 bg-red-50 border-b border-red-200 text-xs font-medium text-red-700">
+            Unable to refresh dashboard orders: {loadError}
+          </div>
+        )}
         {/* Table Header & Controls (Strictly Today's Orders in Asia/Kolkata timezone) */}
         <div className="p-4 sm:p-6 border-b border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">

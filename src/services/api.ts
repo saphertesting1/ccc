@@ -613,19 +613,25 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.order) {
-          notifyShopDataChanged();
-          return data.order;
-        }
-      }
-    } catch {
-      // ignore
-    }
 
-    notifyShopDataChanged();
-    return newOrder;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Order API returned an unexpected response (HTTP ${res.status}).`);
+      }
+
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.order) {
+        throw new Error(data.error || `Order API failed with status ${res.status}.`);
+      }
+
+      notifyShopDataChanged();
+      return data.order;
+    } catch (error) {
+      console.error('[Orders] Failed to save order through the fallback API:', error);
+      throw error instanceof Error
+        ? error
+        : new Error('Failed to save order. Please try again.');
+    }
   },
 
   async getOrder(orderNumberOrId: string): Promise<Order> {
@@ -695,7 +701,7 @@ export const api = {
 
     // 5. Safe attempt to contact backend server API (guaranteed never to throw "Unexpected HTML response")
     try {
-      const data = await safeFetchJson<{ success: boolean; order: Order }>(
+      const data = await safeFetchJson<{ success: boolean; order: Order } | null>(
         `${API_BASE}/orders/${encodeURIComponent(decoded)}`,
         undefined,
         null
@@ -1119,10 +1125,12 @@ export const api = {
 
     const data = await safeFetchJson<{ success: boolean; orders: Order[] }>(
       `${API_BASE}/admin/orders?${params.toString()}`,
-      { headers: getAdminAuthHeader() },
-      { success: true, orders: [] }
+      { headers: getAdminAuthHeader() }
     );
-    return (data.orders || []).map(mapDbToOrder);
+    if (!data.success || !Array.isArray(data.orders)) {
+      throw new Error('The orders API returned an invalid response.');
+    }
+    return data.orders.map(mapDbToOrder);
   },
 
   async createAdminManualOrder(orderData: any): Promise<Order> {
