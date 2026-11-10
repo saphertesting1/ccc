@@ -21,7 +21,7 @@ import { api } from '../services/api.js';
 import { ShopSettings } from '../types/index.js';
 
 export default function AdminSettingsPage() {
-  const { settings, refreshShopData } = useShop();
+  const { settings, refreshShopData, updateLocalSettings } = useShop();
   const [formData, setFormData] = useState<Partial<ShopSettings>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -51,8 +51,10 @@ export default function AdminSettingsPage() {
     setErrorMessage(null);
 
     try {
-      await api.updateSettings(formData);
-      await refreshShopData();
+      const saved = await api.updateSettings(formData);
+      updateLocalSettings(saved);
+      setFormData({ ...saved });
+      await refreshShopData().catch(() => {});
       setSuccessMessage('Shop settings and delivery configurations updated successfully.');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {

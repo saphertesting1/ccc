@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useParams, Link } from 'react-router-dom';
 import { 
   Search, 
   Clock, 
@@ -28,8 +28,10 @@ const STATUS_STEPS: { status: OrderStatus; label: string; description: string }[
 ];
 
 export default function OrderStatusPage() {
+  const { ref: pathRef } = useParams<{ ref?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialRef = searchParams.get('ref') || '';
+  const searchRef = searchParams.get('ref') || '';
+  const initialRef = (pathRef || searchRef || '').trim();
   const { settings } = useShop();
 
   const [query, setQuery] = useState(initialRef);
@@ -55,10 +57,12 @@ export default function OrderStatusPage() {
   }, []);
 
   useEffect(() => {
-    if (initialRef) {
-      fetchOrder(initialRef);
+    const activeRef = (pathRef || searchParams.get('ref') || '').trim();
+    if (activeRef) {
+      setQuery(activeRef);
+      fetchOrder(activeRef);
     }
-  }, [initialRef, fetchOrder]);
+  }, [pathRef, searchParams, fetchOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,6 +271,19 @@ export default function OrderStatusPage() {
                       <div className="font-medium text-stone-800 pt-1 flex items-center gap-1">
                         <Phone className="w-3.5 h-3.5 text-[#D92332]" />
                         <span>{order.customer.phone}</span>
+                      </div>
+                    )}
+                    {order.customer.googleMapsUrl && (
+                      <div className="pt-2">
+                        <a
+                          href={order.customer.googleMapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition-colors"
+                        >
+                          <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                          <span>View on Google Maps</span>
+                        </a>
                       </div>
                     )}
                   </div>

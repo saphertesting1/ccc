@@ -24,14 +24,12 @@ import { useShop } from '../context/ShopContext.js';
 export default function AdminDashboardPage() {
   const { settings, refreshShopData } = useShop();
   const todayKolkata = getKolkataDateString(new Date());
-  const yesterdayKolkata = getKolkataDateString(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
   const [reports, setReports] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'All' | OrderStatus>('All');
-  const [selectedDate, setSelectedDate] = useState<string>(todayKolkata); // Default today in Indian timezone (Issue 5)
 
   const loadDashboardData = async () => {
     try {
@@ -75,40 +73,36 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // Derive operations metrics directly from actual database orders & reports (Asia/Kolkata timezone)
+  // Derive operations metrics strictly for TODAY in Indian Standard Time (Asia/Kolkata)
   const todayOrders = orders.filter(o => o.createdAt && getKolkataDateString(o.createdAt) === todayKolkata);
   
   // 1. Today's orders count
   const todayOrdersCount = reports?.todayOrdersCount ?? todayOrders.length;
 
-  // 2. Orders awaiting action (New orders waiting for store acceptance)
-  const ordersAwaitingAction = orders.filter(o => o.orderStatus === 'New').length;
+  // 2. Orders awaiting action (New orders placed today waiting for store acceptance)
+  const ordersAwaitingAction = todayOrders.filter(o => o.orderStatus === 'New').length;
 
-  // 3. Orders currently being prepared or delivered
-  const ordersBeingPreparedOrDelivered = orders.filter(
+  // 3. Orders currently being prepared or delivered today
+  const ordersBeingPreparedOrDelivered = todayOrders.filter(
     o => o.orderStatus === 'Accepted' || 
          o.orderStatus === 'Preparing' || 
          o.orderStatus === 'Ready for Dispatch' || 
          o.orderStatus === 'Out for Delivery'
   ).length;
 
-  // 4. Completed orders (Delivered)
-  const completedOrdersCount = orders.filter(o => o.orderStatus === 'Delivered').length;
+  // 4. Completed orders (Delivered today)
+  const completedOrdersCount = todayOrders.filter(o => o.orderStatus === 'Delivered').length;
 
-  // 5. Today's sales total
+  // 5. Today's sales total (Delivered or active orders today)
   const calculatedTodaySales = todayOrders
     .filter(o => o.orderStatus !== 'Cancelled' && o.orderStatus !== 'Rejected')
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
   const todaySalesTotal = reports?.todayRevenue ?? calculatedTodaySales;
 
-  // Filtered recent orders by Selected Date and Status (Issue 5)
-  const dateFilteredOrders = selectedDate === 'All'
-    ? orders
-    : orders.filter(o => getKolkataDateString(o.createdAt) === selectedDate);
-
+  // Filtered today's orders by Status
   const displayedOrders = (statusFilter === 'All' 
-    ? dateFilteredOrders 
-    : dateFilteredOrders.filter(o => o.orderStatus === statusFilter)
+    ? todayOrders 
+    : todayOrders.filter(o => o.orderStatus === statusFilter)
   ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const getStatusBadge = (status: OrderStatus) => {
@@ -272,91 +266,46 @@ export default function AdminDashboardPage() {
 
       {/* Recent Orders Table & List */}
       <div className="bg-white rounded-3xl border border-stone-200 shadow-xs overflow-hidden">
-        {/* Table Header & Controls (Issue 5: Date filter in Asia/Kolkata timezone) */}
-        <div className="p-4 sm:p-6 border-b border-stone-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        {/* Table Header & Controls (Strictly Today's Orders in Asia/Kolkata timezone) */}
+        <div className="p-4 sm:p-6 border-b border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-[#38251F]">
-                  Recent Orders
+                  Today's Orders
                 </h2>
-                <span className="px-2 py-0.5 rounded-md bg-stone-100 text-[10px] font-bold text-stone-600">
-                  {selectedDate === todayKolkata ? "Today's Orders" : selectedDate === yesterdayKolkata ? "Yesterday's Orders" : selectedDate === 'All' ? 'All Orders' : selectedDate}
+                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-[10px] font-bold text-amber-900 border border-amber-200">
+                  IST • Today
                 </span>
               </div>
               <p className="text-[11px] text-stone-400">
-                Live list of customer orders in Indian Standard Time ({displayedOrders.length} orders)
+                Live customer orders placed today ({displayedOrders.length} orders)
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Quick Date Presets */}
-            <div className="flex items-center bg-stone-50 border border-stone-200 rounded-xl p-0.5 gap-0.5">
-              <button
-                type="button"
-                onClick={() => setSelectedDate(todayKolkata)}
-                className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${
-                  selectedDate === todayKolkata
-                    ? 'bg-[#D92332] text-white shadow-2xs'
-                    : 'text-stone-600 hover:bg-stone-200/60'
-                }`}
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedDate(yesterdayKolkata)}
-                className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${
-                  selectedDate === yesterdayKolkata
-                    ? 'bg-[#38251F] text-white shadow-2xs'
-                    : 'text-stone-600 hover:bg-stone-200/60'
-                }`}
-              >
-                Yesterday
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedDate('All')}
-                className={`px-2 py-1 rounded-lg text-xs font-bold transition-colors ${
-                  selectedDate === 'All'
-                    ? 'bg-[#38251F] text-white shadow-2xs'
-                    : 'text-stone-600 hover:bg-stone-200/60'
-                }`}
-              >
-                All
-              </button>
-            </div>
-
-            {/* Custom Date Input */}
-            <input
-              type="date"
-              value={selectedDate === 'All' ? '' : selectedDate}
-              onChange={e => setSelectedDate(e.target.value || 'All')}
-              className="px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-semibold text-stone-700 focus:outline-hidden"
-              title="Select specific date"
-            />
-
             {/* Quick Status Filter */}
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value as any)}
               className="text-xs font-semibold bg-stone-50 border border-stone-300 rounded-xl px-2.5 py-1.5 text-stone-700 focus:outline-hidden"
             >
-              <option value="All">All Statuses ({dateFilteredOrders.length})</option>
+              <option value="All">All Statuses ({todayOrders.length})</option>
               <option value="New">New</option>
               <option value="Accepted">Accepted</option>
               <option value="Preparing">Preparing</option>
+              <option value="Ready for Dispatch">Ready for Dispatch</option>
               <option value="Out for Delivery">Out for Delivery</option>
               <option value="Delivered">Delivered</option>
             </select>
 
             <Link
               to="/admin/orders"
-              className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-[#38251F] text-xs font-bold rounded-xl flex items-center gap-1 transition-colors"
+              className="px-3.5 py-1.5 bg-[#38251F] hover:bg-[#D92332] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors shadow-2xs"
             >
-              <span>Manage All</span>
+              <span>Manage All Historical Orders</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -371,15 +320,15 @@ export default function AdminDashboardPage() {
         ) : displayedOrders.length === 0 ? (
           <div className="p-12 text-center text-xs text-stone-500 space-y-1">
             <ShoppingBag className="w-8 h-8 text-stone-300 mx-auto mb-1" />
-            <p className="font-bold text-stone-700">No orders for {selectedDate === 'All' ? 'this filter' : selectedDate}</p>
-            <p className="text-stone-400">Orders placed on the selected Indian calendar date will appear here in chronological order.</p>
-            {selectedDate !== todayKolkata && (
+            <p className="font-bold text-stone-700">No orders placed today yet</p>
+            <p className="text-stone-400">Customer orders placed today ({todayKolkata}) will appear here live in chronological order.</p>
+            {statusFilter !== 'All' && (
               <button
                 type="button"
-                onClick={() => setSelectedDate(todayKolkata)}
+                onClick={() => setStatusFilter('All')}
                 className="mt-2 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl"
               >
-                Switch to Today's Orders
+                Clear Status Filter ({statusFilter})
               </button>
             )}
           </div>

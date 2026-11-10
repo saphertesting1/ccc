@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
-  Sparkles, 
   Clock, 
   ShieldCheck, 
   ArrowRight, 
@@ -35,7 +34,6 @@ export default function HomePage() {
             {/* Left Content */}
             <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#D92332]/30 border border-[#D92332] text-amber-200 text-xs font-bold tracking-wide">
-                <Sparkles className="w-3.5 h-3.5 text-[#D92332]" />
                 <span>CHANDU CHICKEN CENTER • DAILY FRESH FARM POULTRY</span>
               </div>
 
@@ -83,14 +81,14 @@ export default function HomePage() {
             </div>
 
             {/* Right Hero Image Showcase */}
-            <div className="lg:col-span-5 relative">
-              <div className="relative mx-auto max-w-sm rounded-3xl overflow-hidden shadow-2xl border-4 border-white/10 aspect-4/3 group">
+            <div className="lg:col-span-5 relative flex flex-col items-center">
+              <div className="relative w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl border-4 border-white/10 aspect-4/3 group">
                 <img
                   src="https://images.unsplash.com/photo-1604503468506-a8da13d82791?auto=format&fit=crop&w=800&q=80"
                   alt="Fresh Raw Chicken Cuts at Chandu Chicken Center"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-5 text-white">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent flex flex-col justify-end p-5 pb-8 sm:pb-7 text-white">
                   <span className="text-amber-400 text-xs font-bold uppercase tracking-wider">
                     Today's Fresh Batch
                   </span>
@@ -99,9 +97,9 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Floating Badge */}
-              <div className="absolute -bottom-4 -left-2 sm:left-4 bg-[#FFF9F1] text-[#38251F] p-3 rounded-2xl shadow-xl border border-amber-200 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs">
+              {/* Floating Badge - Positioned cleanly without overlapping image caption */}
+              <div className="relative -mt-6 sm:absolute sm:-bottom-5 sm:left-4 bg-[#FFF9F1] text-[#38251F] p-3 rounded-2xl shadow-xl border border-amber-200 flex items-center gap-3 z-20">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
                   ⚡ 45m
                 </div>
                 <div>

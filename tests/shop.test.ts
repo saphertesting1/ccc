@@ -227,12 +227,18 @@ async function runTestSuite() {
   console.log('\n▶ Test 11: Product Weight Pack Price Configuration (250g, 500g, 1kg)');
   const wholeChicken = await repo.getProductById('prod-whole-chicken');
   assert(wholeChicken !== null, 'Whole chicken product must exist');
-  assert.strictEqual(wholeChicken.weights.length, 1, 'Originally whole chicken has 1kg only');
-  assert.strictEqual(wholeChicken.weights[0].price, 220, '1kg pack original price is 220');
+  // Reset to original 1kg pack to ensure test idempotency across multiple runs
+  await repo.saveProduct({
+    ...wholeChicken,
+    weights: [{ weight: '1kg' as const, price: 220, inStock: true }]
+  });
+  const freshWhole = (await repo.getProductById('prod-whole-chicken'))!;
+  assert.strictEqual(freshWhole.weights.length, 1, 'Originally whole chicken has 1kg only');
+  assert.strictEqual(freshWhole.weights[0].price, 220, '1kg pack original price is 220');
 
   // Admin configures 250g and 500g prices alongside 1kg:
   const updatedWholeChicken = {
-    ...wholeChicken,
+    ...freshWhole,
     weights: [
       { weight: '250g' as const, price: 60, inStock: true },
       { weight: '500g' as const, price: 115, inStock: true },

@@ -17,7 +17,8 @@ import {
   Calendar,
   User,
   History,
-  Tag
+  Tag,
+  ExternalLink
 } from 'lucide-react';
 import { api, getKolkataDateString } from '../services/api.js';
 import { Order, OrderStatus, PaymentStatus } from '../types/index.js';
@@ -82,13 +83,11 @@ export const getStatusTextClass = (status: OrderStatus | string) => {
 };
 
 export const isManualOrder = (order: Order) => {
-  return (
+  return Boolean(
+    order.isManual === true ||
+    order.orderSource === 'manual' ||
     order.idempotencyKey?.startsWith('admin-') ||
-    order.id?.startsWith('ord-') ||
-    order.customer?.notes?.toLowerCase().includes('manual order') ||
-    order.customer?.address?.toLowerCase().includes('counter') ||
-    (order as any).isManual === true ||
-    (order as any).orderType === 'Walk-in'
+    order.customer?.notes?.toLowerCase().includes('manual order')
   );
 };
 
@@ -545,7 +544,7 @@ export default function AdminOrdersPage() {
                 filteredOrders.map(order => {
                   const manual = isManualOrder(order);
                   return (
-                    <tr key={order.id} className="hover:bg-amber-50/30 transition-colors">
+                    <tr key={order.id} className="hover:bg-amber-50/60 transition-colors odd:bg-white even:bg-stone-50/50 border-b border-stone-200/90">
                       {/* Order # and Tag */}
                       <td className="py-3.5 px-4 font-mono font-bold text-[#D92332]">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -561,8 +560,8 @@ export default function AdminOrdersPage() {
                         </div>
                       </td>
 
-                      {/* Customer & Phone (Clickable for History - Issue 1) */}
-                      <td className="py-3.5 px-4">
+                      {/* Customer, Phone & Delivery Address / Maps Pin */}
+                      <td className="py-3.5 px-4 max-w-xs">
                         <div className="font-bold text-[#38251F]">{order.customer.name}</div>
                         <div className="flex items-center gap-1 mt-0.5">
                           <button
@@ -575,6 +574,21 @@ export default function AdminOrdersPage() {
                             <span>{order.customer.phone || 'No phone'}</span>
                           </button>
                         </div>
+                        <div className="text-[11px] text-stone-500 line-clamp-1 mt-0.5" title={order.customer.address}>
+                          {order.customer.address}{order.customer.landmark ? ` (${order.customer.landmark})` : ''}
+                        </div>
+                        {order.customer.googleMapsUrl && (
+                          <a
+                            href={order.customer.googleMapsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-bold hover:underline mt-0.5"
+                          >
+                            <MapPin className="w-2.5 h-2.5" />
+                            <span>Google Maps Pin</span>
+                            <ExternalLink className="w-2 h-2" />
+                          </a>
+                        )}
                       </td>
 
                       {/* Cuts Summary */}
@@ -772,7 +786,7 @@ export default function AdminOrdersPage() {
                   )}
                 </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-stone-200 space-y-1">
+                <div className="bg-white p-4 rounded-2xl border border-stone-200 space-y-1.5">
                   <span className="font-bold text-stone-500 uppercase tracking-wider text-[10px]">
                     Delivery / Pickup Address
                   </span>
@@ -780,6 +794,32 @@ export default function AdminOrdersPage() {
                   {activeOrder.customer.landmark && (
                     <div className="text-stone-500 text-[11px]">Landmark: {activeOrder.customer.landmark}</div>
                   )}
+                  {(() => {
+                    const mapsUrl = activeOrder.customer.googleMapsUrl || 
+                      (activeOrder.customer.latitude && activeOrder.customer.longitude
+                        ? `https://www.google.com/maps?q=${activeOrder.customer.latitude},${activeOrder.customer.longitude}`
+                        : null);
+
+                    return mapsUrl ? (
+                      <div className="pt-1.5">
+                        <a
+                          href={mapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl font-bold text-xs transition-colors shadow-2xs"
+                        >
+                          <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          <span>View on Google Maps</span>
+                          <ExternalLink className="w-3 h-3 text-blue-500" />
+                        </a>
+                        {activeOrder.customer.latitude && activeOrder.customer.longitude && (
+                          <div className="text-[10px] text-stone-400 mt-1 font-mono">
+                            GPS: {activeOrder.customer.latitude}, {activeOrder.customer.longitude}
+                          </div>
+                        )}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               </div>
 

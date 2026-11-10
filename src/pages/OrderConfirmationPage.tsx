@@ -178,6 +178,19 @@ export default function OrderConfirmationPage() {
               <p className="text-stone-500">Landmark: {order.customer.landmark}</p>
             )}
             <p className="font-medium text-stone-600 mt-1">Phone: {order.customer.phone}</p>
+            {order.customer.googleMapsUrl && (
+              <div className="pt-1.5">
+                <a
+                  href={order.customer.googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                >
+                  <MapPin className="w-3 h-3 text-blue-600" />
+                  <span>View Delivery Pin on Google Maps</span>
+                </a>
+              </div>
+            )}
           </div>
         </div>
 

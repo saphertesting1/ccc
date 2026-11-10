@@ -283,7 +283,11 @@ export function mapDbToOrder(r: any): Order {
       phone: String(customer.phone || ''),
       address: String(customer.address || ''),
       landmark: customer.landmark ? String(customer.landmark) : '',
-      notes: customer.notes ? String(customer.notes) : ''
+      notes: customer.notes ? String(customer.notes) : '',
+      latitude: typeof customer.latitude === 'number' ? customer.latitude : (customer.latitude ? parseFloat(customer.latitude) : undefined),
+      longitude: typeof customer.longitude === 'number' ? customer.longitude : (customer.longitude ? parseFloat(customer.longitude) : undefined),
+      coordinatesConfirmed: Boolean(customer.coordinatesConfirmed),
+      googleMapsUrl: customer.googleMapsUrl || (customer.latitude && customer.longitude ? `https://www.google.com/maps?q=${customer.latitude},${customer.longitude}` : undefined)
     },
     items: mappedItems,
     subtotal,
@@ -297,7 +301,9 @@ export function mapDbToOrder(r: any): Order {
     createdAt: r.created_at || r.createdAt || new Date().toISOString(),
     updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
     estimatedDeliveryTime: r.estimated_delivery_time || r.estimatedDeliveryTime,
-    idempotencyKey: r.idempotency_key || r.idempotencyKey
+    idempotencyKey: r.idempotency_key || r.idempotencyKey,
+    orderSource: r.order_source || (r.idempotency_key?.startsWith('admin-') || (typeof customer === 'object' && customer?.notes?.includes('[Manual Order')) ? 'manual' : 'website'),
+    isManual: Boolean(r.is_manual || r.idempotency_key?.startsWith('admin-') || (typeof customer === 'object' && customer?.notes?.includes('[Manual Order')))
   };
 }
 
@@ -539,6 +545,8 @@ export const api = {
           note: 'Customer placed order via website'
         }
       ],
+      orderSource: 'website',
+      isManual: false,
       createdAt: nowIso,
       updatedAt: nowIso
     };
@@ -559,6 +567,9 @@ export const api = {
           payment_status: newOrder.paymentStatus,
           order_status: newOrder.orderStatus,
           status_history: newOrder.statusHistory,
+          idempotency_key: payload.idempotencyKey || `idem-${Date.now()}`,
+          order_source: 'website',
+          is_manual: false,
           created_at: newOrder.createdAt,
           updated_at: newOrder.updatedAt
         };
@@ -1130,7 +1141,9 @@ export const api = {
       ],
       createdAt: nowIso,
       updatedAt: nowIso,
-      idempotencyKey: `admin-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+      idempotencyKey: `admin-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      orderSource: 'manual',
+      isManual: true
     };
 
     if (isSupabaseConfigured && supabase) {
@@ -1149,6 +1162,8 @@ export const api = {
           order_status: manualOrder.orderStatus,
           status_history: manualOrder.statusHistory,
           idempotency_key: manualOrder.idempotencyKey,
+          order_source: 'manual',
+          is_manual: true,
           created_at: manualOrder.createdAt,
           updated_at: manualOrder.updatedAt
         };
@@ -1878,26 +1893,29 @@ export const api = {
   async updateSettings(settings: Partial<ShopSettings>): Promise<ShopSettings> {
     const current = await this.getShopSettings();
 
-    // Explicitly allow 0 as valid minimum order amount
-    const minOrderAmount = typeof settings.minOrderAmount === 'number'
-      ? Math.max(0, settings.minOrderAmount)
-      : (current.minOrderAmount ?? 0);
+    const parseNum = (val: any, fallbackVal: number): number => {
+      if (val === undefined || val === null || val === '') return fallbackVal;
+      const n = Number(val);
+      return isNaN(n) ? fallbackVal : Math.max(0, n);
+    };
 
-    const deliveryFee = typeof settings.deliveryFee === 'number'
-      ? Math.max(0, settings.deliveryFee)
-      : (current.deliveryFee ?? 30);
-
-    const freeDeliveryThreshold = typeof settings.freeDeliveryThreshold === 'number'
-      ? Math.max(0, settings.freeDeliveryThreshold)
-      : (current.freeDeliveryThreshold ?? 499);
+    const minOrderAmount = parseNum(settings.minOrderAmount, current.minOrderAmount ?? 0);
+    const deliveryFee = parseNum(settings.deliveryFee, current.deliveryFee ?? 30);
+    const freeDeliveryThreshold = parseNum(settings.freeDeliveryThreshold, current.freeDeliveryThreshold ?? 499);
+    const deliveryTimeEstimateMins = Math.max(1, parseNum(settings.deliveryTimeEstimateMins, current.deliveryTimeEstimateMins ?? 45));
 
     const updated: ShopSettings = {
       ...current,
       ...settings,
       minOrderAmount,
       deliveryFee,
-      freeDeliveryThreshold
+      freeDeliveryThreshold,
+      deliveryTimeEstimateMins
     };
+
+    try {
+      localStorage.setItem('ccc_cached_settings', JSON.stringify(updated));
+    } catch {}
 
     if (isSupabaseConfigured && supabase) {
       const dbRow = {

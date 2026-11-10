@@ -41,32 +41,33 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       console.error('Failed to load shop data:', err);
       setError(err.message || 'Could not connect to shop backend');
+      throw err;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refreshShopData();
+    refreshShopData().catch(() => {});
 
     // Cross-tab and in-tab synchronization handlers
     const handleSync = () => {
-      refreshShopData(false);
+      refreshShopData(false).catch(() => {});
     };
 
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'ccc_shop_data_updated') {
-        refreshShopData(false);
+        refreshShopData(false).catch(() => {});
       }
     };
 
     const handleFocus = () => {
-      refreshShopData(false);
+      refreshShopData(false).catch(() => {});
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshShopData(false);
+        refreshShopData(false).catch(() => {});
       }
     };
 
@@ -80,7 +81,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         bc = new BroadcastChannel('ccc_shop_sync');
         bc.onmessage = () => {
-          refreshShopData(false);
+          refreshShopData(false).catch(() => {});
         };
       } catch {
         // BroadcastChannel optional

@@ -35,11 +35,44 @@ export default function CustomerOrdersPage() {
       const raw = localStorage.getItem('ccc_customer_orders');
       if (raw) {
         const localOrderList: Order[] = JSON.parse(raw);
-        // Refresh statuses for these orders from the API
+        // Refresh statuses for these orders from the API while preserving customer details
         const refreshed = await Promise.all(
           localOrderList.map(async o => {
             try {
-              return await api.getOrder(o.orderNumber);
+              const live = await api.getOrder(o.orderNumber);
+              // Calculate fallback subtotal & total
+              const calcSub = o.items && o.items.length > 0
+                ? o.items.reduce((s, it) => s + (it.subtotal || (it.unitPrice * it.quantity)), 0)
+                : 0;
+              const calcTotal = (live.totalAmount && live.totalAmount > 0)
+                ? live.totalAmount
+                : (o.totalAmount && o.totalAmount > 0)
+                ? o.totalAmount
+                : (calcSub + (o.deliveryFee || 0) - (o.discount || 0));
+
+              return {
+                ...o,
+                orderStatus: live.orderStatus || o.orderStatus,
+                statusHistory: (live.statusHistory && live.statusHistory.length > 0) ? live.statusHistory : o.statusHistory,
+                estimatedDeliveryTime: live.estimatedDeliveryTime || o.estimatedDeliveryTime,
+                paymentStatus: live.paymentStatus || o.paymentStatus,
+                items: (live.items && live.items.length > 0) ? live.items : (o.items || []),
+                subtotal: (live.subtotal && live.subtotal > 0) ? live.subtotal : (o.subtotal || calcSub),
+                deliveryFee: live.deliveryFee ?? o.deliveryFee ?? 0,
+                discount: live.discount ?? o.discount ?? 0,
+                totalAmount: calcTotal,
+                customer: {
+                  name: o.customer?.name || live.customer?.name || 'Customer',
+                  phone: o.customer?.phone || live.customer?.phone || '',
+                  address: o.customer?.address || live.customer?.address || '',
+                  landmark: o.customer?.landmark || live.customer?.landmark || '',
+                  notes: o.customer?.notes || live.customer?.notes || '',
+                  latitude: o.customer?.latitude ?? live.customer?.latitude,
+                  longitude: o.customer?.longitude ?? live.customer?.longitude,
+                  coordinatesConfirmed: o.customer?.coordinatesConfirmed ?? live.customer?.coordinatesConfirmed,
+                  googleMapsUrl: o.customer?.googleMapsUrl ?? live.customer?.googleMapsUrl
+                }
+              };
             } catch {
               return o;
             }
@@ -194,37 +227,83 @@ export default function CustomerOrdersPage() {
                     </div>
                   </div>
 
-                  <div className="text-right sm:text-right flex sm:flex-col items-center sm:items-end justify-between">
-                    <span className="text-base font-black text-[#38251F]">
-                      ₹{order.totalAmount}
-                    </span>
-                    <span className="text-[10px] text-stone-500 font-semibold bg-stone-100 px-1.5 py-0.5 rounded">
-                      {order.paymentMethod === 'COD' ? 'Cash on Delivery' : 'UPI'} ({order.paymentStatus})
-                    </span>
-                  </div>
+                  {(() => {
+                    const calcSub = order.items && order.items.length > 0
+                      ? order.items.reduce((sum, it) => sum + (it.subtotal || (it.unitPrice * it.quantity)), 0)
+                      : (order.subtotal || 0);
+                    const finalTotal = order.totalAmount > 0
+                      ? order.totalAmount
+                      : (calcSub + (order.deliveryFee || 0) - (order.discount || 0));
+
+                    return (
+                      <div className="text-right flex sm:flex-col items-center sm:items-end justify-between">
+                        <div>
+                          <span className="text-base font-black text-[#38251F]">
+                            ₹{finalTotal}
+                          </span>
+                          {order.deliveryFee > 0 && (
+                            <div className="text-[10px] text-stone-500 font-medium">
+                              Subtotal: ₹{calcSub} + Delivery: ₹{order.deliveryFee}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-stone-500 font-semibold bg-stone-100 px-1.5 py-0.5 rounded mt-0.5">
+                          {order.paymentMethod === 'COD' ? 'Cash on Delivery' : 'UPI'} ({order.paymentStatus})
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Items Summary */}
-                <div className="space-y-1.5 text-xs">
-                  <div className="font-bold text-stone-500 uppercase text-[10px] tracking-wider">
-                    Cuts Ordered:
+                <div className="space-y-1.5 text-xs bg-amber-50/40 p-3 rounded-xl border border-amber-100/70">
+                  <div className="font-bold text-stone-600 uppercase text-[10px] tracking-wider flex items-center justify-between">
+                    <span>Cuts Ordered ({order.items.length})</span>
+                    <span>Line Subtotal</span>
                   </div>
-                  <div className="space-y-1">
-                    {order.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-stone-700">
-                        <span>
-                          <strong>{item.quantity}×</strong> {item.productName} ({item.weight} • {item.cutPreference})
-                        </span>
-                        <span className="font-bold text-stone-900">₹{item.subtotal}</span>
-                      </div>
-                    ))}
+                  <div className="space-y-1 divide-y divide-amber-100/60 pt-1">
+                    {order.items.length > 0 ? (
+                      order.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-stone-700 pt-1">
+                          <span>
+                            <strong className="text-[#38251F]">{item.quantity}×</strong> {item.productName}{' '}
+                            <span className="text-stone-500 text-[11px]">({item.weight} • {item.cutPreference})</span>
+                          </span>
+                          <span className="font-bold text-stone-900">₹{item.subtotal || (item.unitPrice * item.quantity)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-stone-400 italic text-[11px] pt-1">Item details saved in shop butchering queue</div>
+                    )}
                   </div>
                 </div>
 
                 {/* Delivery Address snippet */}
-                <div className="text-xs text-stone-500 flex items-start gap-1.5 bg-stone-50 p-2.5 rounded-xl border border-stone-100">
-                  <MapPin className="w-3.5 h-3.5 text-stone-400 shrink-0 mt-0.5" />
-                  <span className="line-clamp-1">{order.customer.address}{order.customer.landmark ? ` (${order.customer.landmark})` : ''}</span>
+                <div className="text-xs text-stone-700 bg-stone-50 p-3 rounded-xl border border-stone-200/80 space-y-1">
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-[#D92332] shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="font-bold text-[#38251F]">
+                        {order.customer.name || 'Customer'} {order.customer.phone ? `• ${order.customer.phone}` : ''}
+                      </div>
+                      <div className="text-stone-600 mt-0.5">
+                        {order.customer.address || 'Standard home delivery'}
+                        {order.customer.landmark ? ` (Landmark: ${order.customer.landmark})` : ''}
+                      </div>
+                      {order.customer.googleMapsUrl && (
+                        <a
+                          href={order.customer.googleMapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-bold mt-1.5 hover:underline"
+                        >
+                          <MapPin className="w-3 h-3 text-blue-600" />
+                          <span>View Location on Google Maps</span>
+                          <ArrowRight className="w-2.5 h-2.5" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Actions */}

@@ -11,7 +11,11 @@ import {
   AlertCircle, 
   ArrowLeft,
   ChevronRight,
-  Info
+  Info,
+  Navigation,
+  Check,
+  X,
+  ExternalLink
 } from 'lucide-react';
 import { useCart } from '../context/CartContext.js';
 import { useShop } from '../context/ShopContext.js';
@@ -52,6 +56,56 @@ export default function CheckoutPage() {
   const [address, setAddress] = useState(defaultAddr?.address || '');
   const [landmark, setLandmark] = useState(defaultAddr?.landmark || '');
   const [notes, setNotes] = useState('');
+
+  // GPS Location State (Issue 5: Geolocation API with confirmation UI & Google Maps URL)
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'detected' | 'confirmed' | 'denied' | 'error'>('idle');
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
+  const [coordinatesConfirmed, setCoordinatesConfirmed] = useState(false);
+  const [gpsNotice, setGpsNotice] = useState<string | null>(null);
+
+  const handleGetLocation = () => {
+    if (!navigator.geolocation) {
+      setGpsStatus('error');
+      setGpsNotice('GPS Geolocation is not supported by your browser. Please type your delivery address manually.');
+      return;
+    }
+
+    setGpsStatus('locating');
+    setGpsNotice(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        const accuracy = Math.round(pos.coords.accuracy);
+        setCoords({ latitude: lat, longitude: lng, accuracy });
+        setGpsStatus('detected');
+      },
+      (err) => {
+        console.warn('Geolocation error:', err);
+        if (err.code === err.PERMISSION_DENIED) {
+          setGpsStatus('denied');
+          setGpsNotice('Location access was denied. No problem! Please enter your home delivery address manually below.');
+        } else {
+          setGpsStatus('error');
+          setGpsNotice('Unable to fetch precise location. Please enter your address details manually.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+    );
+  };
+
+  const handleConfirmLocation = () => {
+    setCoordinatesConfirmed(true);
+    setGpsStatus('confirmed');
+  };
+
+  const handleClearLocation = () => {
+    setCoords(null);
+    setCoordinatesConfirmed(false);
+    setGpsStatus('idle');
+    setGpsNotice(null);
+  };
 
   // Payment method selection
   const [paymentMethod, setPaymentMethod] = useState<'COD' | 'UPI'>('COD');
@@ -116,13 +170,23 @@ export default function CheckoutPage() {
     try {
       setIsSubmitting(true);
 
+      const googleMapsUrl = coords && coordinatesConfirmed
+        ? `https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`
+        : undefined;
+
       const payload = {
         customer: {
           name: name.trim(),
           phone: cleanPhone,
           address: address.trim(),
           landmark: landmark.trim(),
-          notes: notes.trim()
+          notes: notes.trim(),
+          ...(coords && coordinatesConfirmed ? {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            coordinatesConfirmed: true,
+            googleMapsUrl
+          } : {})
         },
         items: cart.map(item => ({
           productId: item.productId,
@@ -274,6 +338,116 @@ export default function CheckoutPage() {
                     <span className="text-[10px] text-stone-500">
                       Tap a saved address to autofill:
                     </span>
+                  )}
+                </div>
+
+                {/* GPS Location Prompt & Confirmation UI (Issue 5) */}
+                <div className="mb-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-stone-50 p-2.5 rounded-xl border border-stone-200">
+                    <span className="text-[11px] font-semibold text-stone-700">
+                      Pinpoint doorstep delivery using your phone's GPS:
+                    </span>
+                    {gpsStatus !== 'confirmed' && gpsStatus !== 'detected' && (
+                      <button
+                        type="button"
+                        onClick={handleGetLocation}
+                        disabled={gpsStatus === 'locating'}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs disabled:opacity-50"
+                      >
+                        <Navigation className={`w-3.5 h-3.5 text-white ${gpsStatus === 'locating' ? 'animate-spin' : ''}`} />
+                        <span>{gpsStatus === 'locating' ? 'Getting Location...' : 'Use Current GPS'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Detected GPS State: Customer Confirmation Prompt */}
+                  {gpsStatus === 'detected' && coords && (
+                    <div className="p-3 bg-emerald-50 border-2 border-emerald-500 rounded-xl space-y-2 animate-fadeIn">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-emerald-900 font-bold text-xs">
+                          <MapPin className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>GPS Coordinates Found: {coords.latitude}, {coords.longitude}</span>
+                        </div>
+                        <a
+                          href={`https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-emerald-800 hover:text-emerald-950 font-bold underline inline-flex items-center gap-0.5"
+                        >
+                          <span>Preview Pin</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+
+                      <p className="text-[11px] text-emerald-800">
+                        Confirm this GPS location so our delivery partner can navigate directly to your doorstep using Google Maps:
+                      </p>
+
+                      <div className="flex items-center gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={handleConfirmLocation}
+                          className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Confirm This Location</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearLocation}
+                          className="px-2.5 py-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 rounded-lg text-xs font-semibold transition-colors"
+                        >
+                          Cancel / Type Manually
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Confirmed GPS State */}
+                  {gpsStatus === 'confirmed' && coords && (
+                    <div className="p-2.5 bg-emerald-100/90 border border-emerald-400 text-emerald-950 rounded-xl flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <Check className="w-4 h-4 text-emerald-700 font-black shrink-0" />
+                        <span>
+                          <strong>GPS Location Confirmed</strong> ({coords.latitude}, {coords.longitude}) • Maps link attached
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={`https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-800 hover:text-emerald-950 font-bold underline inline-flex items-center gap-0.5 text-[11px]"
+                        >
+                          <span>Maps</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={handleClearLocation}
+                          className="text-stone-500 hover:text-stone-800 text-[11px] font-bold underline"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Informational GPS error / denied banner (non-blocking) */}
+                  {gpsNotice && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-[11px] flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Info className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>{gpsNotice}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setGpsNotice(null)}
+                        className="text-amber-700 hover:text-amber-900 p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
                   )}
                 </div>
 

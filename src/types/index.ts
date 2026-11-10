@@ -65,6 +65,10 @@ export interface CustomerInfo {
   address: string;
   landmark?: string;
   notes?: string;
+  latitude?: number;
+  longitude?: number;
+  coordinatesConfirmed?: boolean;
+  googleMapsUrl?: string;
 }
 
 export interface OrderItem {
@@ -100,6 +104,8 @@ export interface Order {
   updatedAt: string;
   estimatedDeliveryTime?: string;
   idempotencyKey?: string;
+  orderSource?: 'website' | 'manual';
+  isManual?: boolean;
 }
 
 export interface ShopSettings {

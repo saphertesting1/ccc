@@ -12,14 +12,35 @@ export default function ProductsPage() {
   const [searchInput, setSearchInput] = useState<string>(searchParam);
   const [inStockOnly, setInStockOnly] = useState(false);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshSuccess, setRefreshSuccess] = useState(false);
+
   // Revalidate fresh catalog on mount
   useEffect(() => {
-    refreshShopData();
+    refreshShopData().catch(() => {});
   }, [refreshShopData]);
 
   useEffect(() => {
     setSearchInput(searchParams.get('search') || '');
   }, [searchParams]);
+
+  const handleRefresh = async () => {
+    if (isRefreshing || isLoading) return;
+    setIsRefreshing(true);
+    setRefreshError(null);
+    setRefreshSuccess(false);
+    try {
+      await refreshShopData(true);
+      setRefreshSuccess(true);
+      setTimeout(() => setRefreshSuccess(false), 2000);
+    } catch (err: any) {
+      console.error('Failed to refresh products:', err);
+      setRefreshError(err.message || 'Unable to fetch latest products. Please check your connection.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,14 +95,31 @@ export default function ProductsPage() {
         </div>
 
         <button
-          onClick={() => refreshShopData(true)}
-          className="self-start sm:self-auto px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-2xs"
+          onClick={handleRefresh}
+          disabled={isRefreshing || isLoading}
+          className="self-start sm:self-auto px-3.5 py-2 bg-stone-100 hover:bg-stone-200 disabled:opacity-60 disabled:cursor-not-allowed text-stone-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors shadow-2xs"
           title="Refresh products from store"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>Refresh</span>
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || isLoading ? 'animate-spin text-[#D92332]' : ''}`} />
+          <span>{isRefreshing ? 'Refreshing...' : refreshSuccess ? 'Updated!' : 'Refresh'}</span>
         </button>
       </div>
+
+      {/* Refresh Error Banner */}
+      {refreshError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>{refreshError}</span>
+          </div>
+          <button
+            onClick={() => setRefreshError(null)}
+            className="p-1 text-red-500 hover:text-red-700 rounded-md"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Search & In-Stock Filter Toolbar */}
       <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between bg-white p-3.5 rounded-2xl border border-stone-200/80 shadow-2xs">
