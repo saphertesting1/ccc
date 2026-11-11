@@ -572,6 +572,7 @@ export const api = {
 
     // Save to Supabase if available
     if (isSupabaseConfigured && supabase) {
+      let orderInsertError: { code?: string; message: string } | null = null;
       try {
         const dbPayload = {
           id: newOrder.id,
@@ -598,15 +599,27 @@ export const api = {
           notifyShopDataChanged();
           return newOrder;
         }
-        if (error) {
-          console.warn('[Supabase] Order insert error:', error.message);
-        }
+        orderInsertError = error;
       } catch (e) {
-        console.warn('[Supabase] Failed to write order to Supabase:', e);
+        console.error(
+          '[Supabase] Failed to write order to Supabase:',
+          e instanceof Error ? e.message : 'Unknown error'
+        );
+        throw new Error('Unable to save the order to the database. Please check your connection and try again.');
+      }
+
+      if (orderInsertError) {
+        console.error('[Supabase] Order insert error:', {
+          code: orderInsertError.code,
+          message: orderInsertError.message
+        });
+        throw new Error(
+          `Unable to save the order to the database (Supabase error ${orderInsertError.code || 'unknown'}). Please try again.`
+        );
       }
     }
 
-    // Attempt local API
+    // Use the local API only when Supabase is not configured (for standalone development).
     try {
       const res = await fetch(`${API_BASE}/orders`, {
         method: 'POST',

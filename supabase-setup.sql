@@ -111,6 +111,12 @@ CREATE TABLE IF NOT EXISTS public.orders (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS order_source TEXT NOT NULL DEFAULT 'website';
+
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS is_manual BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders(payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
