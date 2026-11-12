@@ -345,6 +345,26 @@ async function runTests() {
       /Unable to save stock or price changes:.*row-level security/i
     );
 
+    console.log('▶ Product save rejects missing or invalid weight prices instead of inserting sample prices');
+    await assert.rejects(
+      api.saveProduct({ name: 'Test product', weights: [] }),
+      /Add at least one valid weight option with a non-negative price/i
+    );
+
+    console.log('▶ Whole-product stock toggle reports a zero-row Supabase update as a failure');
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        return Response.json([]);
+      }
+      throw new Error(`Unexpected whole-product stock request: ${method} ${url}`);
+    };
+    await assert.rejects(
+      api.toggleProductStock('missing-product', false),
+      /No product was updated/i
+    );
+
     console.log('▶ UPI session helper never fabricates a merchant payment URI or success response');
     await assert.rejects(
       api.getUpiSession('test-order', 25000),
