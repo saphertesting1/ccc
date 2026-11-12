@@ -20,6 +20,7 @@ import {
 import { useCart } from '../context/CartContext.js';
 import { useShop } from '../context/ShopContext.js';
 import { api } from '../services/api.js';
+import { loadCustomerOrders, saveCustomerOrders } from '../services/orderTrackingStorage.js';
 import { UpiPendingModal } from '../components/UpiPendingModal.js';
 
 export default function CheckoutPage() {
@@ -202,9 +203,7 @@ export default function CheckoutPage() {
 
       // Persist order locally for customer orders history
       try {
-        const raw = localStorage.getItem('ccc_customer_orders');
-        const existingList = raw ? JSON.parse(raw) : [];
-        localStorage.setItem('ccc_customer_orders', JSON.stringify([order, ...existingList]));
+        saveCustomerOrders([order, ...loadCustomerOrders()]);
       } catch (e) {
         console.error('Failed to save to local customer orders:', e);
       }

@@ -18,7 +18,8 @@ import {
   User,
   History,
   Tag,
-  ExternalLink
+  ExternalLink,
+  Copy
 } from 'lucide-react';
 import { api, getKolkataDateString } from '../services/api.js';
 import { Order, OrderStatus, PaymentStatus } from '../types/index.js';
@@ -706,6 +707,27 @@ export default function AdminOrdersPage() {
                   <span>{message}</span>
                 </div>
               )}
+              {activeOrder.trackingToken && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium text-amber-900">Secure customer tracking link</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const trackingUrl = `${window.location.origin}/order-status/${encodeURIComponent(activeOrder.orderNumber)}#token=${encodeURIComponent(activeOrder.trackingToken!)}`;
+                      try {
+                        await navigator.clipboard.writeText(trackingUrl);
+                        setMessage('Secure tracking link copied. Share it with the customer.');
+                      } catch {
+                        setErrorMessage('Could not copy the tracking link. Check browser clipboard permissions.');
+                      }
+                    }}
+                    className="px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-900 hover:bg-amber-100 inline-flex items-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy link
+                  </button>
+                </div>
+              )}
 
               {/* Status Modification Controls (Issue 3: Dynamic status color text!) */}
               <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4">
@@ -1013,8 +1035,8 @@ export default function AdminOrdersPage() {
         onClose={() => setIsManualModalOpen(false)}
         onOrderCreated={(newOrder) => {
           loadOrders();
+          setActiveOrder(newOrder);
           setMessage(`Manual order ${newOrder.orderNumber} successfully recorded in database!`);
-          setTimeout(() => setMessage(null), 5000);
         }}
       />
     </div>

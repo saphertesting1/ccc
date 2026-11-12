@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Order } from '../types/index.js';
 import { useShop } from '../context/ShopContext.js';
+import { getOrderTrackingPath } from '../services/orderTrackingStorage.js';
 
 export default function OrderConfirmationPage() {
   const location = useLocation();
@@ -94,7 +95,7 @@ export default function OrderConfirmationPage() {
         {/* Fast Action Buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
           <Link
-            to={`/track-order?ref=${encodeURIComponent(order.orderNumber)}`}
+            to={getOrderTrackingPath(order.orderNumber, order.trackingToken)}
             className="w-full sm:w-auto px-6 py-3 bg-[#D92332] hover:bg-[#b81d2a] text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
           >
             <span>Track Live Order Status</span>

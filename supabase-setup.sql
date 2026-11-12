@@ -117,6 +117,13 @@ ALTER TABLE public.orders
 ALTER TABLE public.orders
     ADD COLUMN IF NOT EXISTS is_manual BOOLEAN NOT NULL DEFAULT FALSE;
 
+ALTER TABLE public.orders
+    ADD COLUMN IF NOT EXISTS tracking_token_hash TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tracking_token_hash
+    ON public.orders(tracking_token_hash)
+    WHERE tracking_token_hash IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON public.orders(payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
@@ -133,6 +140,147 @@ CREATE TABLE IF NOT EXISTS public.admin_users (
     role TEXT NOT NULL DEFAULT 'super_admin' CHECK (role IN ('admin', 'super_admin')),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS public.manual_order_audit (
+    order_id TEXT PRIMARY KEY,
+    admin_user_id UUID NOT NULL REFERENCES public.admin_users(id) ON DELETE RESTRICT,
+    metadata JSONB NOT NULL CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.order_tracking_legacy_limits (
+    order_id TEXT PRIMARY KEY REFERENCES public.orders(id) ON DELETE CASCADE,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.order_tracking_legacy_limits ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.order_tracking_legacy_limits FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.order_tracking_legacy_limits TO service_role;
+
+CREATE OR REPLACE FUNCTION public.allow_legacy_order_tracking_attempt(
+    p_order_id TEXT,
+    p_customer_phone TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_attempt_count INTEGER;
+  v_window_started_at TIMESTAMPTZ;
+  v_stored_phone TEXT;
+  v_submitted_phone TEXT;
+BEGIN
+  INSERT INTO public.order_tracking_legacy_limits (order_id, attempt_count, window_started_at)
+  VALUES (p_order_id, 0, NOW())
+  ON CONFLICT (order_id) DO NOTHING;
+
+  SELECT attempt_count, window_started_at
+  INTO v_attempt_count, v_window_started_at
+  FROM public.order_tracking_legacy_limits
+  WHERE order_id = p_order_id
+  FOR UPDATE;
+
+  IF v_window_started_at <= NOW() - INTERVAL '15 minutes' THEN
+    v_attempt_count := 0;
+    UPDATE public.order_tracking_legacy_limits
+    SET attempt_count = 0, window_started_at = NOW()
+    WHERE order_id = p_order_id;
+  END IF;
+
+  IF v_attempt_count >= 8 THEN
+    RETURN FALSE;
+  END IF;
+
+  SELECT regexp_replace(coalesce(customer->>'phone', ''), '[^0-9]', '', 'g')
+  INTO v_stored_phone
+  FROM public.orders
+  WHERE id = p_order_id;
+  v_submitted_phone := regexp_replace(coalesce(p_customer_phone, ''), '[^0-9]', '', 'g');
+
+  IF length(v_submitted_phone) < 7
+     OR length(v_submitted_phone) > 15
+     OR v_stored_phone IS NULL
+     OR v_stored_phone <> v_submitted_phone THEN
+    UPDATE public.order_tracking_legacy_limits
+    SET attempt_count = attempt_count + 1
+    WHERE order_id = p_order_id;
+    RETURN FALSE;
+  END IF;
+
+  RETURN TRUE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.allow_legacy_order_tracking_attempt(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.allow_legacy_order_tracking_attempt(TEXT, TEXT) TO service_role;
+
+ALTER TABLE public.manual_order_audit ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.manual_order_audit FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.manual_order_audit TO service_role;
+
+CREATE OR REPLACE FUNCTION public.create_manual_order_with_audit(
+    p_order JSONB,
+    p_admin_user_id UUID,
+    p_audit_metadata JSONB
+)
+RETURNS SETOF public.orders
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_order public.orders%ROWTYPE;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.admin_users WHERE id = p_admin_user_id) THEN
+    RAISE EXCEPTION 'Administrator membership is required.';
+  END IF;
+  IF jsonb_typeof(p_order) IS DISTINCT FROM 'object'
+     OR p_order->>'order_source' IS DISTINCT FROM 'manual'
+     OR p_order->>'is_manual' IS DISTINCT FROM 'true'
+     OR coalesce(p_order->>'tracking_token_hash', '') !~ '^[a-f0-9]{64}$'
+     OR jsonb_typeof(p_audit_metadata) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'Invalid manual order request.';
+  END IF;
+
+  INSERT INTO public.orders (
+    id, order_number, idempotency_key, customer, items, subtotal, delivery_fee,
+    discount, total_amount, payment_method, payment_status, order_status,
+    status_history, estimated_delivery_time, order_source, is_manual, tracking_token_hash,
+    created_at, updated_at
+  ) VALUES (
+    p_order->>'id',
+    p_order->>'order_number',
+    p_order->>'idempotency_key',
+    p_order->'customer',
+    p_order->'items',
+    (p_order->>'subtotal')::NUMERIC,
+    (p_order->>'delivery_fee')::NUMERIC,
+    (p_order->>'discount')::NUMERIC,
+    (p_order->>'total_amount')::NUMERIC,
+    p_order->>'payment_method',
+    p_order->>'payment_status',
+    p_order->>'order_status',
+    p_order->'status_history',
+    p_order->>'estimated_delivery_time',
+    'manual',
+    TRUE,
+    p_order->>'tracking_token_hash',
+    (p_order->>'created_at')::TIMESTAMPTZ,
+    (p_order->>'updated_at')::TIMESTAMPTZ
+  )
+  RETURNING * INTO v_order;
+
+  INSERT INTO public.manual_order_audit (order_id, admin_user_id, metadata)
+  VALUES (v_order.id, p_admin_user_id, p_audit_metadata);
+  RETURN NEXT v_order;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_manual_order_with_audit(JSONB, UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_manual_order_with_audit(JSONB, UUID, JSONB) TO service_role;
 
 -- Secure function to verify if the requesting user is an authorized admin
 -- CRITICAL SECURITY:
@@ -204,10 +352,8 @@ DROP FUNCTION IF EXISTS public.get_customer_orders_by_phone(TEXT);
 DROP FUNCTION IF EXISTS public.get_order_by_reference(TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.get_order_by_reference(TEXT);
 
--- Secure function for guest customer tracking (Strict Least-Privilege Exposure)
--- Public callers receive ONLY: order_number, order_status, status_history, estimated_delivery_time, created_at.
--- Customer details, item details, billing amounts, payment details, internal IDs, and idempotency keys are strictly NULL for public callers.
--- Full order disclosure is ONLY granted to authenticated and authorized shop administrators.
+-- Secure reference lookup for authorized administrators only.
+-- Public tracking uses the high-entropy token Edge Function instead.
 CREATE OR REPLACE FUNCTION public.get_order_by_reference(p_reference TEXT)
 RETURNS TABLE (
     id TEXT,
@@ -235,10 +381,9 @@ AS $$
 DECLARE
   v_ref TEXT;
   v_order public.orders%ROWTYPE;
-  v_is_admin BOOLEAN;
 BEGIN
   v_ref := trim(coalesce(p_reference, ''));
-  IF v_ref = '' THEN
+  IF v_ref = '' OR NOT public.is_admin() THEN
     RETURN;
   END IF;
 
@@ -251,52 +396,24 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Verify whether caller is an authenticated, authorized shop administrator
-  v_is_admin := public.is_admin();
-
-  IF v_is_admin THEN
-    -- Full order disclosure for authorized administrators ONLY
-    RETURN QUERY
-    SELECT 
-      v_order.id,
-      v_order.order_number,
-      v_order.idempotency_key,
-      v_order.customer,
-      v_order.items,
-      v_order.subtotal,
-      v_order.delivery_fee,
-      v_order.discount,
-      v_order.total_amount,
-      v_order.payment_method,
-      v_order.payment_status,
-      v_order.order_status,
-      v_order.status_history,
-      v_order.estimated_delivery_time,
-      v_order.created_at,
-      v_order.updated_at;
-  ELSE
-    -- Minimal public tracking output:
-    -- Exposes ONLY order reference, order status, and delivery-progress info.
-    -- All customer details, items, billing amounts, payment details, and internal keys are completely redacted.
-    RETURN QUERY
-    SELECT 
-      NULL::TEXT,                       -- id (redacted)
-      v_order.order_number,             -- order reference for display
-      NULL::TEXT,                       -- idempotency_key (redacted)
-      NULL::JSONB,                      -- customer (redacted)
-      NULL::JSONB,                      -- items (redacted)
-      NULL::NUMERIC(10, 2),             -- subtotal (redacted)
-      NULL::NUMERIC(10, 2),             -- delivery_fee (redacted)
-      NULL::NUMERIC(10, 2),             -- discount (redacted)
-      NULL::NUMERIC(10, 2),             -- total_amount (redacted)
-      NULL::TEXT,                       -- payment_method (redacted)
-      NULL::TEXT,                       -- payment_status (redacted)
-      v_order.order_status,             -- order status
-      v_order.status_history,           -- butchering and delivery progress steps
-      v_order.estimated_delivery_time,  -- estimated delivery time
-      v_order.created_at,               -- order timestamp
-      NULL::TIMESTAMPTZ;                -- updated_at (redacted)
-  END IF;
+  RETURN QUERY
+  SELECT
+    v_order.id,
+    v_order.order_number,
+    v_order.idempotency_key,
+    v_order.customer,
+    v_order.items,
+    v_order.subtotal,
+    v_order.delivery_fee,
+    v_order.discount,
+    v_order.total_amount,
+    v_order.payment_method,
+    v_order.payment_status,
+    v_order.order_status,
+    v_order.status_history,
+    v_order.estimated_delivery_time,
+    v_order.created_at,
+    v_order.updated_at;
 END;
 $$;
 
@@ -394,15 +511,12 @@ CREATE POLICY "Admins can insert shop settings"
     WITH CHECK (public.is_admin());
 
 -- 5. Orders Policies (Strict Customer Privacy Protection)
--- Guest customers can place orders without login
+-- Orders are written by trusted server-side Edge Functions, not direct clients.
 DROP POLICY IF EXISTS "Public guest can create order" ON public.orders;
 DROP POLICY IF EXISTS "Anyone can insert orders" ON public.orders;
-CREATE POLICY "Anyone can insert orders"
-    ON public.orders FOR INSERT
-    WITH CHECK (true);
 
 -- Direct SELECT on orders table is strictly restricted to verified shop administrators
--- (Casual visitors MUST use the privacy-masked get_order_by_reference function)
+-- (Casual visitors MUST use the token-protected tracking Edge Function)
 DROP POLICY IF EXISTS "Public can view orders" ON public.orders;
 DROP POLICY IF EXISTS "Admins can view orders" ON public.orders;
 CREATE POLICY "Admins can view orders"
@@ -464,9 +578,9 @@ GRANT SELECT ON TABLE public.shop_settings TO anon, authenticated;
 GRANT INSERT, UPDATE ON TABLE public.shop_settings TO authenticated;
 GRANT ALL ON TABLE public.shop_settings TO service_role;
 
--- Orders (Public insert only; authenticated admin for select, update, delete)
-GRANT INSERT ON TABLE public.orders TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.orders TO authenticated;
+-- Orders (authenticated admin read/update/delete; creation is server-side only)
+REVOKE INSERT ON TABLE public.orders FROM PUBLIC, anon, authenticated;
+GRANT SELECT, UPDATE, DELETE ON TABLE public.orders TO authenticated;
 GRANT ALL ON TABLE public.orders TO service_role;
 
 -- Admin Users (Authenticated check only)

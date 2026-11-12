@@ -106,6 +106,7 @@ export interface Order {
   idempotencyKey?: string;
   orderSource?: 'website' | 'manual';
   isManual?: boolean;
+  trackingToken?: string;
 }
 
 export interface ShopSettings {

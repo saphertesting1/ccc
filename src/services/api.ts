@@ -22,6 +22,38 @@ function getAdminAuthHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+function getPublicTrackingHistory(value: unknown): Order['statusHistory'] {
+  if (!Array.isArray(value)) return [];
+  const statuses: OrderStatus[] = [
+    'New', 'Accepted', 'Preparing', 'Ready for Dispatch',
+    'Out for Delivery', 'Delivered', 'Rejected', 'Cancelled'
+  ];
+  return value.flatMap(entry => {
+    if (!entry || typeof entry !== 'object') return [];
+    const item = entry as Record<string, unknown>;
+    if (
+      typeof item.status !== 'string' ||
+      !statuses.includes(item.status as OrderStatus) ||
+      typeof item.timestamp !== 'string'
+    ) return [];
+    return [{ status: item.status as OrderStatus, timestamp: item.timestamp }];
+  });
+}
+
+async function getOrderFunctionErrorMessage(error: { message: string; context?: unknown }): Promise<string> {
+  if (error.context instanceof Response) {
+    try {
+      const body: unknown = await error.context.clone().json();
+      if (body && typeof body === 'object' && 'error' in body && typeof body.error === 'string') {
+        return body.error;
+      }
+    } catch {
+      // Function gateways may return non-JSON error bodies.
+    }
+  }
+  return error.message;
+}
+
 // Global cross-tab and cross-component synchronization broadcaster
 export function notifyShopDataChanged(): void {
   try {
@@ -515,6 +547,20 @@ export const api = {
 
   // Orders
   async createOrder(payload: CreateOrderRequest): Promise<Order> {
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.functions.invoke('create-guest-order', { body: payload });
+      if (error) {
+        const message = await getOrderFunctionErrorMessage(error);
+        console.error('[Supabase Functions] Guest order creation failed:', message);
+        throw new Error(message || 'Unable to save the order securely. Please try again.');
+      }
+      if (!data?.success || !data.order) {
+        throw new Error(data?.error || 'Unable to save the order. Please try again.');
+      }
+      notifyShopDataChanged();
+      return { ...mapDbToOrder(data.order), trackingToken: data.trackingToken };
+    }
+
     const settings = await this.getShopSettings();
 
     // Calculate subtotal, delivery fee, and total
@@ -570,55 +616,6 @@ export const api = {
       updatedAt: nowIso
     };
 
-    // Save to Supabase if available
-    if (isSupabaseConfigured && supabase) {
-      let orderInsertError: { code?: string; message: string } | null = null;
-      try {
-        const dbPayload = {
-          id: newOrder.id,
-          order_number: newOrder.orderNumber,
-          customer: newOrder.customer,
-          items: newOrder.items,
-          subtotal: newOrder.subtotal,
-          delivery_fee: newOrder.deliveryFee,
-          discount: newOrder.discount,
-          total_amount: newOrder.totalAmount,
-          payment_method: newOrder.paymentMethod,
-          payment_status: newOrder.paymentStatus,
-          order_status: newOrder.orderStatus,
-          status_history: newOrder.statusHistory,
-          idempotency_key: payload.idempotencyKey || `idem-${Date.now()}`,
-          order_source: 'website',
-          is_manual: false,
-          created_at: newOrder.createdAt,
-          updated_at: newOrder.updatedAt
-        };
-
-        const { error } = await supabase.from('orders').insert([dbPayload]);
-        if (!error) {
-          notifyShopDataChanged();
-          return newOrder;
-        }
-        orderInsertError = error;
-      } catch (e) {
-        console.error(
-          '[Supabase] Failed to write order to Supabase:',
-          e instanceof Error ? e.message : 'Unknown error'
-        );
-        throw new Error('Unable to save the order to the database. Please check your connection and try again.');
-      }
-
-      if (orderInsertError) {
-        console.error('[Supabase] Order insert error:', {
-          code: orderInsertError.code,
-          message: orderInsertError.message
-        });
-        throw new Error(
-          `Unable to save the order to the database (Supabase error ${orderInsertError.code || 'unknown'}). Please try again.`
-        );
-      }
-    }
-
     // Use the local API only when Supabase is not configured (for standalone development).
     try {
       const res = await fetch(`${API_BASE}/orders`, {
@@ -647,7 +644,7 @@ export const api = {
     }
   },
 
-  async getOrder(orderNumberOrId: string): Promise<Order> {
+  async getOrder(orderNumberOrId: string, trackingToken?: string, legacyPhone?: string): Promise<Order> {
     const decoded = decodeURIComponent(orderNumberOrId).trim();
     if (!decoded) {
       throw new Error('Please enter a valid order number.');
@@ -663,69 +660,118 @@ export const api = {
       }
     } catch {}
 
+    if (isSupabaseConfigured && supabase && trackingToken) {
+      const { data, error } = await supabase.functions.invoke('track-order', {
+        body: { orderNumber: decoded, trackingToken }
+      });
+      if (error) {
+        const message = await getOrderFunctionErrorMessage(error);
+        throw new Error(message || 'Unable to verify this tracking link.');
+      }
+      if (!data?.success || !data.order?.order_number) {
+        throw new Error(data?.error || 'Unable to verify this tracking link.');
+      }
+      const order: Order = {
+        id: localOrder?.id || data.order.order_number,
+        orderNumber: data.order.order_number,
+        customer: { name: '', phone: '', address: '', landmark: '' },
+        items: [],
+        subtotal: 0,
+        deliveryFee: 0,
+        discount: 0,
+        totalAmount: 0,
+        paymentMethod: 'COD',
+        paymentStatus: 'Pending',
+        orderStatus: data.order.order_status,
+        statusHistory: getPublicTrackingHistory(data.order.status_history),
+        createdAt: data.order.created_at,
+        updatedAt: data.order.created_at,
+        estimatedDeliveryTime: data.order.estimated_delivery_time,
+        trackingToken
+      };
+      if (localOrder?.trackingToken === trackingToken) {
+        return {
+          ...localOrder,
+          orderStatus: order.orderStatus,
+          statusHistory: order.statusHistory,
+          estimatedDeliveryTime: order.estimatedDeliveryTime
+        };
+      }
+      return order;
+    }
+
+    if (isSupabaseConfigured && supabase && legacyPhone) {
+      const { data, error } = await supabase.functions.invoke('track-order', {
+        body: { orderNumber: decoded, customerPhone: legacyPhone }
+      });
+      if (error) {
+        const message = await getOrderFunctionErrorMessage(error);
+        throw new Error(message || 'Unable to verify the older order reference.');
+      }
+      if (!data?.success || !data.order?.order_number) {
+        throw new Error(data?.error || 'Unable to verify the older order reference.');
+      }
+      const order: Order = {
+        id: data.order.order_number,
+        orderNumber: data.order.order_number,
+        customer: { name: '', phone: '', address: '', landmark: '' },
+        items: [],
+        subtotal: 0,
+        deliveryFee: 0,
+        discount: 0,
+        totalAmount: 0,
+        paymentMethod: 'COD',
+        paymentStatus: 'Pending',
+        orderStatus: data.order.order_status,
+        statusHistory: getPublicTrackingHistory(data.order.status_history),
+        createdAt: data.order.created_at,
+        updatedAt: data.order.created_at,
+        estimatedDeliveryTime: data.order.estimated_delivery_time
+      };
+      if (
+        localOrder &&
+        localOrder.customer.phone.replace(/\D/g, '') === legacyPhone.replace(/\D/g, '')
+      ) {
+        return {
+          ...localOrder,
+          orderStatus: order.orderStatus,
+          statusHistory: order.statusHistory,
+          estimatedDeliveryTime: order.estimatedDeliveryTime
+        };
+      }
+      return order;
+    }
+
+    // Admin reference lookup remains available through the RLS-protected RPC.
     if (isSupabaseConfigured && supabase) {
-      try {
-        // 2. Attempt secure RPC function (safe for public guest tracking without leaking other customers' private data)
-        const { data: rpcRows, error: rpcError } = await supabase
-          .rpc('get_order_by_reference', { p_reference: decoded });
-
-        const rpcOrder = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
-        if (!rpcError && rpcOrder && (rpcOrder.order_number || rpcOrder.orderNumber)) {
-          return {
-            id: rpcOrder.id || localOrder?.id || rpcOrder.order_number || decoded,
-            orderNumber: rpcOrder.order_number || rpcOrder.orderNumber || decoded,
-            customer: rpcOrder.customer || localOrder?.customer || { name: '', phone: '', address: '', landmark: '' },
-            items: (Array.isArray(rpcOrder.items) && rpcOrder.items.length > 0) ? rpcOrder.items : (localOrder?.items || []),
-            subtotal: rpcOrder.subtotal != null ? parseFloat(rpcOrder.subtotal) : (localOrder?.subtotal || 0),
-            deliveryFee: rpcOrder.delivery_fee != null ? parseFloat(rpcOrder.delivery_fee) : (localOrder?.deliveryFee || 0),
-            discount: rpcOrder.discount != null ? parseFloat(rpcOrder.discount) : (localOrder?.discount || 0),
-            totalAmount: rpcOrder.total_amount != null ? parseFloat(rpcOrder.total_amount) : (localOrder?.totalAmount || 0),
-            paymentMethod: rpcOrder.payment_method || localOrder?.paymentMethod || 'COD',
-            paymentStatus: rpcOrder.payment_status || localOrder?.paymentStatus || 'Pending',
-            orderStatus: rpcOrder.order_status || localOrder?.orderStatus || 'New',
-            statusHistory: (Array.isArray(rpcOrder.status_history) && rpcOrder.status_history.length > 0)
-              ? rpcOrder.status_history
-              : (localOrder?.statusHistory || []),
-            estimatedDeliveryTime: rpcOrder.estimated_delivery_time || localOrder?.estimatedDeliveryTime || '45 mins',
-            createdAt: rpcOrder.created_at || localOrder?.createdAt || new Date().toISOString(),
-            updatedAt: rpcOrder.updated_at || localOrder?.updatedAt || new Date().toISOString()
-          };
-        }
-
-        // 3. Direct table query (for authenticated admins with full RLS access)
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*')
-          .or(`id.eq.${decoded},order_number.eq.${decoded}`)
-          .maybeSingle();
-
-        if (!error && data) {
-          return mapDbToOrder(data);
-        }
-      } catch (e) {
-        console.warn('[Supabase] Error fetching order:', e);
+      const { data: rpcRows, error: rpcError } = await supabase
+        .rpc('get_order_by_reference', { p_reference: decoded });
+      const rpcOrder = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+      if (!rpcError && rpcOrder && (rpcOrder.order_number || rpcOrder.orderNumber)) {
+        return mapDbToOrder(rpcOrder);
       }
     }
 
-    // 4. Return local customer order if found on this device
-    if (localOrder) {
-      return localOrder;
+    if (localOrder && trackingToken && localOrder.trackingToken === trackingToken) {
+      return {
+        ...localOrder,
+        statusHistory: getPublicTrackingHistory(localOrder.statusHistory)
+      };
     }
 
-    // 5. Safe attempt to contact backend server API (guaranteed never to throw "Unexpected HTML response")
-    try {
-      const data = await safeFetchJson<{ success: boolean; order: Order } | null>(
-        `${API_BASE}/orders/${encodeURIComponent(decoded)}`,
-        undefined,
-        null
-      );
-      if (data?.order) return data.order;
-    } catch {
-      // ignore network errors
+    if (
+      localOrder &&
+      !localOrder.trackingToken &&
+      legacyPhone &&
+      localOrder.customer.phone.replace(/\D/g, '') === legacyPhone.replace(/\D/g, '')
+    ) {
+      return {
+        ...localOrder,
+        statusHistory: getPublicTrackingHistory(localOrder.statusHistory)
+      };
     }
 
-    // 6. Clean, user-facing error message
-    throw new Error(`Order "${decoded}" not found. Please verify your order number and try again.`);
+    throw new Error('Use the secure tracking link, or verify an older order number with the phone number used at checkout.');
   },
 
   // Payment Session
@@ -1128,7 +1174,9 @@ export const api = {
         }
       } catch (e) {
         console.warn('[Supabase] Failed to fetch orders:', e);
+        throw new Error('Unable to load orders from Supabase. Please try again.');
       }
+      throw new Error('Unable to load orders from Supabase. Please try again.');
     }
 
     const params = new URLSearchParams();
@@ -1147,6 +1195,22 @@ export const api = {
   },
 
   async createAdminManualOrder(orderData: any): Promise<Order> {
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.functions.invoke('create-admin-manual-order', {
+        body: orderData
+      });
+      if (error) {
+        const message = await getOrderFunctionErrorMessage(error);
+        console.error('[Supabase Functions] Manual order creation failed:', message);
+        throw new Error(message || 'Failed to save manual order. Please verify your administrator session and try again.');
+      }
+      if (!data?.success || !data.order) {
+        throw new Error(data?.error || 'Failed to save manual order.');
+      }
+      notifyShopDataChanged();
+      return { ...mapDbToOrder(data.order), trackingToken: data.trackingToken };
+    }
+
     const nowIso = new Date().toISOString();
     const dateStr = getKolkataDateString(nowIso).replace(/-/g, '');
     const randomSuffix = Math.floor(100 + Math.random() * 900);
@@ -1215,43 +1279,6 @@ export const api = {
       isManual: true
     };
 
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const dbPayload = {
-          id: manualOrder.id,
-          order_number: manualOrder.orderNumber,
-          customer: manualOrder.customer,
-          items: manualOrder.items,
-          subtotal: manualOrder.subtotal,
-          delivery_fee: manualOrder.deliveryFee,
-          discount: manualOrder.discount,
-          total_amount: manualOrder.totalAmount,
-          payment_method: manualOrder.paymentMethod,
-          payment_status: manualOrder.paymentStatus,
-          order_status: manualOrder.orderStatus,
-          status_history: manualOrder.statusHistory,
-          idempotency_key: manualOrder.idempotencyKey,
-          order_source: 'manual',
-          is_manual: true,
-          created_at: manualOrder.createdAt,
-          updated_at: manualOrder.updatedAt
-        };
-
-        const { data, error } = await supabase.from('orders').insert([dbPayload]).select().single();
-        if (!error && data) {
-          notifyShopDataChanged();
-          return mapDbToOrder(data);
-        }
-        if (error) {
-          console.error('[Supabase] Manual order insert error:', error);
-          throw new Error(`Failed to save manual order in database: ${error.message}`);
-        }
-      } catch (err: any) {
-        if (err.message && err.message.startsWith('Failed to save manual order')) throw err;
-        console.warn('[Supabase] Manual order fallback to backend:', err);
-      }
-    }
-
     try {
       const res = await fetch(`${API_BASE}/admin/orders`, {
         method: 'POST',
@@ -1288,26 +1315,27 @@ export const api = {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: current } = await supabase.from('orders').select('*').eq('id', orderId).single();
-        if (current) {
-          const history = Array.isArray(current.status_history || current.statusHistory)
-            ? [...(current.status_history || current.statusHistory)]
-            : [];
-          history.push({ status, timestamp: nowIso, note: note || `Status updated to ${status}` });
+        const { data: current, error: currentError } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', orderId)
+          .single();
+        if (currentError || !current) throw new Error('Unable to load this order from Supabase.');
+        const history = Array.isArray(current.status_history || current.statusHistory)
+          ? [...(current.status_history || current.statusHistory)]
+          : [];
+        history.push({ status, timestamp: nowIso, note: note || `Status updated to ${status}` });
 
-          const { data, error } = await supabase
-            .from('orders')
-            .update({ order_status: status, status_history: history, updated_at: nowIso })
-            .eq('id', orderId)
-            .select()
-            .single();
+        const { data, error } = await supabase
+          .from('orders')
+          .update({ order_status: status, status_history: history, updated_at: nowIso })
+          .eq('id', orderId)
+          .select()
+          .single();
 
-          if (!error && data) {
-            notifyShopDataChanged();
-            return mapDbToOrder(data);
-          }
-          if (error) throw new Error(error.message);
-        }
+        if (error || !data) throw new Error('Unable to update order status in Supabase.');
+        notifyShopDataChanged();
+        return mapDbToOrder(data);
       } catch (err: any) {
         console.error('Error updating order status in Supabase:', err);
         throw err;
@@ -1340,11 +1368,9 @@ export const api = {
           .select()
           .single();
 
-        if (!error && data) {
-          notifyShopDataChanged();
-          return mapDbToOrder(data);
-        }
-        if (error) throw new Error(error.message);
+        if (error || !data) throw new Error('Unable to update payment status in Supabase.');
+        notifyShopDataChanged();
+        return mapDbToOrder(data);
       } catch (err: any) {
         console.error('Error updating payment status in Supabase:', err);
         throw err;
@@ -1732,6 +1758,12 @@ export const api = {
         }
       }
     } catch {}
+
+    if (isSupabaseConfigured && supabase) {
+      const localOrders = Array.from(ordersMap.values());
+      localOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return localOrders;
+    }
 
     // 2. Query Supabase with specific phone query conditions
     if (isSupabaseConfigured && supabase) {
