@@ -89,8 +89,10 @@ This document describes all endpoints in the Chandu Chicken Center modular Expre
 ## 3. Order Management & Guest Checkout
 
 ### 3.1 Place Guest Order
-- **Endpoint:** `POST /api/orders`
-- **Authentication:** None required (Guest checkout; no account, password, or OTP needed).
+- **Production endpoint:** Supabase Edge Function `create-guest-order`.
+- **Local Express fallback:** `POST /api/orders` (only when Supabase is not configured).
+- **Authentication:** None required for guest checkout; no account, password, or OTP needed.
+- **Payment:** COD only until a real UPI provider is configured and verified.
 - **Request Body:**
   ```json
   {
@@ -146,17 +148,19 @@ This document describes all endpoints in the Chandu Chicken Center modular Expre
   ```
 
 ### 3.2 Order Tracking Status
-- **Endpoint:** `GET /api/orders/:orderNumberOrId`
-- **Response `200 OK`:** Returns full order status timeline, payment status, and immutable items snapshot.
+- **Production endpoint:** Supabase Edge Function `track-order`, using the high-entropy tracking token returned after checkout.
+- **Legacy Express endpoint:** `GET /api/orders/:orderNumberOrId` is disabled because an order number alone must not reveal customer details.
+- **Legacy phone-only history lookup:** Disabled; a phone number alone is not sufficient proof of identity.
+- **Response:** The production tracking function returns only the public order status timeline and estimated delivery time, not customer contact details or the full order record.
 
 ---
 
 ## 4. Protected Admin Endpoints
 
 ### 4.1 Admin Login
-- **Endpoint:** `POST /api/admin/login`
-- **Body:** `{ "username": "admin", "password": "..." }`
-- **Response `200 OK`:** `{ "success": true, "token": "cca_...", "admin": { ... } }`
+- **Production authentication:** Supabase Authentication email/password sign-in, followed by authorization against the trusted `public.admin_users` table.
+- **Local Express fallback:** `POST /api/admin/login` only works when a local administrator record has been explicitly provisioned. There is no shared/default admin account.
+- **Password recovery:** Requires a valid Supabase Authentication recovery flow; the local fallback does not implement email recovery.
 
 ### 4.2 Get All Orders (Filtered)
 - **Endpoint:** `GET /api/admin/orders`

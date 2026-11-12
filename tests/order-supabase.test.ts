@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { getOrderTrackingPath, loadCustomerOrders, saveCustomerOrders } from '../src/services/orderTrackingStorage.js';
+import { clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey } from '../src/services/checkoutIdempotency.js';
 
 async function runTests() {
   const supabaseEnvKeys = [
@@ -46,6 +47,13 @@ async function runTests() {
     const { api } = await import('../src/services/api.js');
     const { isSupabaseConfigured } = await import('../src/services/supabase.js');
     assert.equal(isSupabaseConfigured, true);
+
+    console.log('▶ Guest checkout reuses its idempotency key for an identical retry');
+    const firstCheckoutKey = await getCheckoutIdempotencyKey('same-checkout-payload');
+    assert.equal(await getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
+    assert.notEqual(await getCheckoutIdempotencyKey('changed-checkout-payload'), firstCheckoutKey);
+    clearCheckoutIdempotencyKey();
+    assert.notEqual(await getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
 
     console.log('▶ Customer tracking links reopen without embedding tokens in order records');
     const savedCustomerOrder = {
@@ -291,6 +299,123 @@ async function runTests() {
     console.log('▶ Configured admin order reads do not fall back to a legacy API route');
     await assert.rejects(api.getAdminOrders(), /Supabase/i);
     assert.equal(orderApiFallbackCalls, 0);
+
+    console.log('▶ Variant stock changes only report success after the primary product row is saved');
+    let primaryProductWrites = 0;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'GET') {
+        return Response.json({
+          id: 'prod-curry-cut',
+          weights: [
+            { weight: '250g', price: 65, inStock: true },
+            { weight: '500g', price: 125, inStock: true }
+          ]
+        });
+      }
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        primaryProductWrites++;
+        return Response.json({ id: 'prod-curry-cut' });
+      }
+      if (url.includes('/rest/v1/product_weights')) {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected variant-stock request: ${method} ${url}`);
+    };
+    await api.updateWeightStock('prod-curry-cut', '250g', false);
+    assert.equal(primaryProductWrites, 1);
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'GET') {
+        return Response.json({
+          id: 'prod-curry-cut',
+          weights: [{ weight: '250g', price: 65, inStock: true }]
+        });
+      }
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        return Response.json({ message: 'new row violates row-level security policy', code: '42501' }, { status: 403 });
+      }
+      throw new Error(`Unexpected failed variant-stock request: ${method} ${url}`);
+    };
+    await assert.rejects(
+      api.updateWeightStock('prod-curry-cut', '250g', false),
+      /Unable to save stock or price changes:.*row-level security/i
+    );
+
+    console.log('▶ Product save rejects missing or invalid weight prices instead of inserting sample prices');
+    await assert.rejects(
+      api.saveProduct({ name: 'Test product', weights: [] }),
+      /Add at least one valid weight option with a non-negative price/i
+    );
+
+    console.log('▶ Whole-product stock toggle reports a zero-row Supabase update as a failure');
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        return Response.json([]);
+      }
+      throw new Error(`Unexpected whole-product stock request: ${method} ${url}`);
+    };
+    await assert.rejects(
+      api.toggleProductStock('missing-product', false),
+      /No product was updated/i
+    );
+
+    console.log('▶ UPI session helper never fabricates a merchant payment URI or success response');
+    await assert.rejects(
+      api.getUpiSession('test-order', 25000),
+      /UPI payments are not active yet.*Cash on Delivery/i
+    );
+
+    console.log('▶ Configured production catalogue reads never fall back to demo/local products after an RLS error');
+    let legacyCatalogueFallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/products')) {
+        return Response.json({ message: 'permission denied by row-level security', code: '42501' }, { status: 403 });
+      }
+      if (url.includes('/api/products')) {
+        legacyCatalogueFallbackCalls++;
+        return Response.json({ success: true, products: [] });
+      }
+      throw new Error(`Unexpected production catalogue request: ${url}`);
+    };
+    await assert.rejects(api.getProducts(), /Unable to load products from Supabase:.*permission denied/i);
+    assert.equal(legacyCatalogueFallbackCalls, 0);
+
+    console.log('▶ An empty Supabase catalogue remains empty instead of displaying seeded demo products');
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/products')) return Response.json([]);
+      if (url.includes('/rest/v1/categories')) return Response.json([]);
+      if (url.includes('/api/products') || url.includes('/api/categories')) {
+        legacyCatalogueFallbackCalls++;
+        return Response.json({ success: true, products: [], categories: [] });
+      }
+      throw new Error(`Unexpected empty catalogue request: ${url}`);
+    };
+    assert.deepEqual(await api.getProducts(), []);
+    assert.deepEqual(await api.getAdminProducts(), []);
+    assert.deepEqual(await api.getCategories(), []);
+    assert.equal(legacyCatalogueFallbackCalls, 0);
+
+    console.log('▶ Configured shop settings reads fail visibly instead of using stale cached settings');
+    localStorageData.set('ccc_cached_settings', JSON.stringify({ minOrderAmount: 150 }));
+    let legacySettingsFallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/shop_settings')) {
+        return Response.json({ message: 'permission denied by row-level security', code: '42501' }, { status: 403 });
+      }
+      if (url.includes('/api/settings')) legacySettingsFallbackCalls++;
+      throw new Error(`Unexpected production settings request: ${url}`);
+    };
+    await assert.rejects(api.getShopSettings(), /Unable to load shop settings from Supabase:.*permission denied/i);
+    assert.equal(legacySettingsFallbackCalls, 0);
 
     console.log('✅ Supabase Edge Function order persistence tests passed.');
   } finally {

@@ -346,31 +346,30 @@ export const api = {
   // Public Products
   async getProducts(categoryId?: string, search?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        let query = supabase.from('products').select('*').eq('is_available', true);
-        if (categoryId && categoryId !== 'all') {
-          query = query.eq('category_id', categoryId);
-        }
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          const categories = await this.getCategories();
-          let list = data.map(r => mapDbToProduct(r, categories));
-          if (search && search.trim()) {
-            const q = search.toLowerCase().trim();
-            list = list.filter(p =>
-              p.name.toLowerCase().includes(q) ||
-              p.description.toLowerCase().includes(q) ||
-              (p.categoryName && p.categoryName.toLowerCase().includes(q))
-            );
-          }
-          return list;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch products:', e);
+      let query = supabase.from('products').select('*').eq('is_available', true);
+      if (categoryId && categoryId !== 'all') {
+        query = query.eq('category_id', categoryId);
       }
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Unable to load products from Supabase: ${error.message}`);
+      }
+
+      // An empty live catalogue is a valid result. Never replace it with demo
+      // products or data from the legacy backend in a configured production app.
+      const categories = await this.getCategories();
+      let list = (data || []).map(r => mapDbToProduct(r, categories));
+      if (search && search.trim()) {
+        const q = search.toLowerCase().trim();
+        list = list.filter(p =>
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q) ||
+          (p.categoryName && p.categoryName.toLowerCase().includes(q))
+        );
+      }
+      return list;
     }
 
-    // Local API with fallback
     const params = new URLSearchParams();
     if (categoryId && categoryId !== 'all') params.append('category', categoryId);
     if (search) params.append('search', search);
@@ -399,27 +398,25 @@ export const api = {
   // Admin Products (includes all active & deactivated items)
   async getAdminProducts(search?: string, categoryId?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        let query = supabase.from('products').select('*').order('created_at', { ascending: false });
-        if (categoryId && categoryId !== 'all') {
-          query = query.eq('category_id', categoryId);
-        }
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          const categories = await this.getCategories();
-          let list = data.map(r => mapDbToProduct(r, categories));
-          if (search && search.trim()) {
-            const q = search.toLowerCase().trim();
-            list = list.filter(p =>
-              p.name.toLowerCase().includes(q) ||
-              p.description.toLowerCase().includes(q)
-            );
-          }
-          return list;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch admin products:', e);
+      let query = supabase.from('products').select('*').order('created_at', { ascending: false });
+      if (categoryId && categoryId !== 'all') {
+        query = query.eq('category_id', categoryId);
       }
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Unable to load admin products from Supabase: ${error.message}`);
+      }
+
+      const categories = await this.getCategories();
+      let list = (data || []).map(r => mapDbToProduct(r, categories));
+      if (search && search.trim()) {
+        const q = search.toLowerCase().trim();
+        list = list.filter(p =>
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q)
+        );
+      }
+      return list;
     }
 
     const params = new URLSearchParams();
@@ -452,47 +449,45 @@ export const api = {
 
   async getProductById(id: string): Promise<Product> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.from('products').select('*').eq('id', id).single();
-        if (!error && data) {
-          const categories = await this.getCategories();
-          return mapDbToProduct(data, categories);
-        }
-      } catch {
-        // fallback
+      const { data, error } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
+      if (error) {
+        throw new Error(`Unable to load product from Supabase: ${error.message}`);
       }
+      if (!data) {
+        throw new Error('This product is no longer available.');
+      }
+      const categories = await this.getCategories();
+      return mapDbToProduct(data, categories);
     }
 
-    const fallbackProduct = initialProducts.find(p => p.id === id) || initialProducts[0];
+    const fallbackProduct = initialProducts.find(p => p.id === id);
     const data = await safeFetchJson<{ success: boolean; product: Product }>(
-      `${API_BASE}/products/${id}?_t=${Date.now()}`,
+      `${API_BASE}/products/${encodeURIComponent(id)}?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, product: fallbackProduct }
+      { success: true, product: fallbackProduct as Product }
     );
-    return data.product || fallbackProduct;
+    if (!data.product && !fallbackProduct) throw new Error('Product not found.');
+    return data.product || fallbackProduct as Product;
   },
 
   // Public Categories
   async getCategories(): Promise<Category[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('categories')
-          .select('*')
-          .order('display_order', { ascending: true });
-        if (!error && data && data.length > 0) {
-          return data.map(r => ({
-            id: r.id,
-            name: r.name,
-            slug: r.slug,
-            description: r.description,
-            imageUrl: r.image_url || r.imageUrl,
-            displayOrder: r.display_order ?? r.displayOrder ?? 0
-          }));
-        }
-      } catch (e) {
-        console.warn('[Supabase] Categories query error:', e);
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('display_order', { ascending: true });
+      if (error) {
+        throw new Error(`Unable to load categories from Supabase: ${error.message}`);
       }
+      return (data || []).map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        description: r.description,
+        imageUrl: r.image_url || r.imageUrl,
+        displayOrder: r.display_order ?? r.displayOrder ?? 0
+      }));
     }
 
     const data = await safeFetchJson<{ success: boolean; categories: Category[] }>(
@@ -505,40 +500,33 @@ export const api = {
 
   // Public Shop Settings
   async getShopSettings(): Promise<ShopSettings> {
-    let baselineFallback = initialShopSettings;
-    try {
-      const cached = localStorage.getItem('ccc_cached_settings');
-      if (cached) {
-        baselineFallback = mapDbToSettings(JSON.parse(cached), initialShopSettings);
-      }
-    } catch {}
-
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('shop_settings')
-          .select('*')
-          .eq('id', 1)
-          .maybeSingle();
+      const { data, error } = await supabase
+        .from('shop_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
 
-        if (!error && data) {
-          const mapped = mapDbToSettings(data, baselineFallback);
-          try {
-            localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
-          } catch {}
-          return mapped;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch shop_settings from database:', e);
+      if (error) {
+        throw new Error(`Unable to load shop settings from Supabase: ${error.message}`);
       }
+      if (!data) {
+        throw new Error('Shop settings are not configured in the production database.');
+      }
+
+      const mapped = mapDbToSettings(data, initialShopSettings);
+      try {
+        localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
+      } catch {}
+      return mapped;
     }
 
     const data = await safeFetchJson<{ success: boolean; settings: ShopSettings }>(
       `${API_BASE}/settings?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, settings: baselineFallback }
+      { success: true, settings: initialShopSettings }
     );
-    const mapped = mapDbToSettings(data.settings, baselineFallback);
+    const mapped = mapDbToSettings(data.settings, initialShopSettings);
     try {
       localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
     } catch {}
@@ -775,22 +763,9 @@ export const api = {
   },
 
   // Payment Session
-  async getUpiSession(orderId: string, amountInPaise: number) {
-    try {
-      const res = await fetch(`${API_BASE}/payment/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, amountInPaise })
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // fallback
-    }
-    return {
-      success: true,
-      qrPayload: `upi://pay?pa=chanduchicken@upi&pn=ChanduChickenCenter&am=${(amountInPaise / 100).toFixed(2)}&cu=INR&tn=Order_${orderId}`,
-      sessionId: `sess_${Date.now()}`
-    };
+  async getUpiSession(_orderId: string, _amountInPaise: number) {
+    // Never fabricate a merchant UPI ID, QR payload, or successful payment session.
+    throw new Error('UPI payments are not active yet. Please choose Cash on Delivery.');
   },
 
   // Admin Authentication - Strict verification, NO hardcoded bypasses
@@ -827,18 +802,16 @@ export const api = {
               throw new Error(`Authorization check failed: ${adminQueryError.message}`);
             }
 
-            if (!adminRecord) {
-              // User is authenticated in Supabase Auth, but NOT in public.admin_users
+            if (!adminRecord || (adminRecord.role !== 'admin' && adminRecord.role !== 'super_admin')) {
+              // Fail closed: an authenticated user must have an explicit, valid
+              // role in the trusted administrator allow-list.
               await supabase.auth.signOut();
               throw new Error(
-                'Access denied: Your account credentials are valid, but your account is not authorized as an administrator. Please add your user UUID to the public.admin_users table.'
+                'Access denied: Your account is not authorized as an administrator. Please verify its public.admin_users record.'
               );
             }
 
-            const verifiedRole: 'admin' | 'super_admin' =
-              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
-                ? adminRecord.role
-                : 'super_admin';
+            const verifiedRole: 'admin' | 'super_admin' = adminRecord.role;
 
             const token = data.session?.access_token || `sb_${data.user.id}`;
             const adminObj: AdminUser = {
@@ -911,11 +884,8 @@ export const api = {
             .eq('id', data.user.id)
             .maybeSingle();
 
-          if (!adminErr && adminRecord) {
-            const verifiedRole: 'admin' | 'super_admin' =
-              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
-                ? adminRecord.role
-                : 'super_admin';
+          if (!adminErr && adminRecord && (adminRecord.role === 'admin' || adminRecord.role === 'super_admin')) {
+            const verifiedRole: 'admin' | 'super_admin' = adminRecord.role;
 
             return {
               id: data.user.id,
@@ -957,46 +927,18 @@ export const api = {
       throw new Error('Please enter a valid administrator email address.');
     }
 
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const redirectTo = `${window.location.origin}/admin/reset-password`;
-        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-          redirectTo
-        });
-
-        if (error) {
-          console.warn('[Supabase] resetPasswordForEmail response:', error.message);
-          if (error.message?.toLowerCase().includes('rate limit')) {
-            throw new Error('Too many password reset requests. Please wait a few minutes before trying again.');
-          }
-        }
-
-        return {
-          success: true,
-          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
-        };
-      } catch (e: any) {
-        if (e.message?.includes('Too many password reset requests')) throw e;
-        return {
-          success: true,
-          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
-        };
-      }
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Password recovery is unavailable in local backend mode. Configure Supabase Authentication to enable secure recovery.');
     }
 
-    // Local backend fallback
-    try {
-      const res = await fetch(`${API_BASE}/admin/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { success: true, message: data.message || 'If an administrator account exists for this email, a password recovery link has been sent.' };
+    const redirectTo = `${window.location.origin}/admin/reset-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo });
+    if (error) {
+      if (error.message?.toLowerCase().includes('rate limit')) {
+        throw new Error('Too many password reset requests. Please wait a few minutes before trying again.');
       }
-    } catch {
-      // ignore
+      // Keep the response generic to avoid exposing whether an admin email exists.
+      console.warn('[Supabase] Password recovery request failed:', error.message);
     }
 
     return {
@@ -1010,42 +952,24 @@ export const api = {
       throw new Error('New password must be at least 6 characters long.');
     }
 
-    if (isSupabaseConfigured && supabase) {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) {
-        throw new Error('Password reset session has expired or is invalid. Please request a new recovery link from the admin login page.');
-      }
-
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword
-      });
-
-      if (updateError) {
-        throw new Error(updateError.message || 'Failed to update password');
-      }
-
-      // Safely sign out the recovery session so admin can perform a fresh, authenticated login
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // ignore
-      }
-
-      return {
-        success: true,
-        message: 'Your administrator password has been updated successfully. You can now log in with your new password.'
-      };
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Secure password recovery requires Supabase Authentication and a valid recovery link.');
     }
 
-    // Local backend fallback
-    const res = await fetch(`${API_BASE}/admin/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newPassword })
-    });
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.error || 'Failed to update password');
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
+      throw new Error('Password reset session has expired or is invalid. Please request a new recovery link from the admin login page.');
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    if (updateError) {
+      throw new Error(updateError.message || 'Failed to update password');
+    }
+
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
     }
 
     return {
@@ -1393,23 +1317,41 @@ export const api = {
 
   // Admin Products - Real database creation, editing & deletion
   async saveProduct(product: Partial<Product>): Promise<Product> {
+    if (!product.name || !product.name.trim()) {
+      throw new Error('Product name is required.');
+    }
+
     const isEdit = Boolean(product.id);
     const id = product.id || `prod-${Date.now()}`;
     const slug = product.slug || (product.name ? product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : id);
 
-    const sanitizedWeights: WeightOption[] = (Array.isArray(product.weights) && product.weights.length > 0)
-      ? product.weights
-          .filter((w: any) => w && w.weight && ['250g', '500g', '1kg'].includes(w.weight))
-          .map((w: any) => ({
-            weight: w.weight as WeightUnit,
-            price: typeof w.price === 'number' ? Math.max(0, w.price) : (Math.max(0, parseFloat(String(w.price))) || 0),
-            inStock: w.inStock !== false && w.in_stock !== false
-          }))
-      : [
-          { weight: '250g', price: 65, inStock: true },
-          { weight: '500g', price: 125, inStock: true },
-          { weight: '1kg', price: 240, inStock: true }
-        ];
+    const providedWeights = Array.isArray(product.weights)
+      ? product.weights.filter((w: any) =>
+          w &&
+          ['250g', '500g', '1kg'].includes(w.weight) &&
+          w.price !== undefined &&
+          w.price !== null &&
+          String(w.price).trim() !== '' &&
+          Number.isFinite(Number(w.price)) &&
+          Number(w.price) >= 0
+        )
+      : [];
+    if (providedWeights.length === 0) {
+      throw new Error('Add at least one valid weight option with a non-negative price before saving this product.');
+    }
+
+    const seenWeights = new Set<WeightUnit>();
+    const sanitizedWeights: WeightOption[] = providedWeights
+      .filter((w: any) => {
+        if (seenWeights.has(w.weight as WeightUnit)) return false;
+        seenWeights.add(w.weight as WeightUnit);
+        return true;
+      })
+      .map((w: any) => ({
+        weight: w.weight as WeightUnit,
+        price: Number(w.price),
+        inStock: w.inStock !== false && w.in_stock !== false
+      }));
 
     const fullProduct: Product = {
       id,
@@ -1536,15 +1478,20 @@ export const api = {
 
   async toggleProductStock(productId: string, isAvailable: boolean): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('products')
         .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
-        .eq('id', productId);
+        .eq('id', productId)
+        .select('id')
+        .maybeSingle();
       if (error) {
         if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
           throw new Error('Supabase table "public.products" was not found in the schema cache. Please run supabase-setup.sql in Supabase SQL Editor.');
         }
         throw new Error(error.message);
+      }
+      if (!data) {
+        throw new Error('No product was updated. Check administrator permissions and try again.');
       }
       notifyShopDataChanged();
       return;
@@ -1565,34 +1512,81 @@ export const api = {
 
   async updateWeightStock(productId: string, weight: WeightUnit, inStock: boolean, price?: number): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      const { data: prod } = await supabase.from('products').select('*').eq('id', productId).single();
-      if (prod && Array.isArray(prod.weights)) {
-        const exists = prod.weights.some((w: any) => w.weight === weight);
-        const updatedWeights = exists
-          ? prod.weights.map((w: any) => {
-              if (w.weight === weight) {
-                return { ...w, inStock, ...(typeof price === 'number' ? { price: Math.max(0, price) } : {}) };
-              }
-              return w;
-            })
-          : [...prod.weights, { weight, inStock, price: typeof price === 'number' ? Math.max(0, price) : 0 }];
-        await supabase.from('products').update({ weights: updatedWeights, updated_at: new Date().toISOString() }).eq('id', productId);
+      // The products.weights JSONB field is the source of truth used by the
+      // storefront and the order-creation Edge Function. Never report success
+      // unless this primary record was actually updated.
+      const { data: prod, error: readError } = await supabase
+        .from('products')
+        .select('id, weights')
+        .eq('id', productId)
+        .maybeSingle();
+
+      if (readError) {
+        throw new Error(`Unable to load product variants: ${readError.message}`);
       }
-      try {
-        if (typeof price === 'number') {
-          await supabase.from('product_weights').upsert({
-            product_id: productId,
-            weight,
-            in_stock: inStock,
-            price: Math.max(0, price),
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'product_id,weight' });
-        } else {
-          await supabase.from('product_weights').update({ in_stock: inStock, updated_at: new Date().toISOString() }).match({ product_id: productId, weight });
+      if (!prod) {
+        throw new Error('Product not found. No stock or price changes were saved.');
+      }
+
+      let currentWeights: any = prod.weights;
+      if (typeof currentWeights === 'string') {
+        try {
+          currentWeights = JSON.parse(currentWeights);
+        } catch {
+          throw new Error('This product has invalid weight data. No changes were saved.');
         }
-      } catch {
-        // Optional table
       }
+      if (!Array.isArray(currentWeights)) {
+        throw new Error('This product has invalid weight data. No changes were saved.');
+      }
+
+      const exists = currentWeights.some((w: any) => w?.weight === weight);
+      const updatedWeights = exists
+        ? currentWeights.map((w: any) => {
+            if (w?.weight === weight) {
+              return { ...w, inStock, ...(typeof price === 'number' ? { price: Math.max(0, price) } : {}) };
+            }
+            return w;
+          })
+        : [...currentWeights, { weight, inStock, price: typeof price === 'number' ? Math.max(0, price) : 0 }];
+
+      const { data: savedProduct, error: saveError } = await supabase
+        .from('products')
+        .update({ weights: updatedWeights, updated_at: new Date().toISOString() })
+        .eq('id', productId)
+        .select('id')
+        .maybeSingle();
+
+      if (saveError) {
+        throw new Error(`Unable to save stock or price changes: ${saveError.message}`);
+      }
+      if (!savedProduct) {
+        throw new Error('No product was updated. Check administrator permissions and try again.');
+      }
+
+      // product_weights is a secondary/legacy mirror. The storefront and
+      // order validation read products.weights, so a mirror failure must not
+      // turn a successful primary update into a false failure.
+      try {
+        const mirrorResult = typeof price === 'number'
+          ? await supabase.from('product_weights').upsert({
+              product_id: productId,
+              weight,
+              in_stock: inStock,
+              price: Math.max(0, price),
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'product_id,weight' })
+          : await supabase.from('product_weights')
+              .update({ in_stock: inStock, updated_at: new Date().toISOString() })
+              .match({ product_id: productId, weight });
+
+        if (mirrorResult.error) {
+          console.warn('[Supabase] Product weight mirror could not be synchronized:', mirrorResult.error);
+        }
+      } catch (mirrorError) {
+        console.warn('[Supabase] Product weight mirror could not be synchronized:', mirrorError);
+      }
+
       notifyShopDataChanged();
       return;
     }
@@ -1834,8 +1828,43 @@ export const api = {
   async getReports(params?: { startDate?: string; endDate?: string; productIds?: string[] }) {
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: rawOrders } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (rawOrders && rawOrders.length > 0) {
+        const { data: rawOrders, error: ordersError } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        if (ordersError) {
+          throw new Error(`Unable to load sales reports from Supabase: ${ordersError.message}`);
+        }
+        if (!rawOrders || rawOrders.length === 0) {
+          const todayKolkata = getKolkataDateString(new Date());
+          const startDate = params?.startDate || getKolkataDateString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+          const endDate = params?.endDate || todayKolkata;
+          return {
+            todayRevenue: 0,
+            todayOrdersCount: 0,
+            pendingOrdersCount: 0,
+            activeDeliveriesCount: 0,
+            completedOrdersCount: 0,
+            totalRevenue: 0,
+            topSellingCuts: [],
+            statusBreakdown: { New: 0, Accepted: 0, Preparing: 0, 'Ready for Dispatch': 0, 'Out for Delivery': 0, Delivered: 0, Rejected: 0, Cancelled: 0 },
+            paymentBreakdown: { Pending: 0, Paid: 0, Failed: 0, Refunded: 0 },
+            filterReport: {
+              startDate,
+              endDate,
+              totalOrdersCount: 0,
+              totalQuantitySold: 0,
+              totalWeightSoldKg: 0,
+              totalSalesValue: 0,
+              productBreakdown: [],
+              paymentBreakdown: {
+                COD: { count: 0, amount: 0 },
+                UPI: { count: 0, amount: 0, paidCount: 0, paidAmount: 0, pendingCount: 0, pendingAmount: 0 },
+                Cash: { count: 0, amount: 0 }
+              },
+              dailyBreakdown: [],
+              orderBreakdown: []
+            }
+          };
+        }
+        if (rawOrders.length > 0) {
           const allOrders: Order[] = rawOrders.map(mapDbToOrder);
 
           const todayKolkata = getKolkataDateString(new Date());
@@ -2019,7 +2048,10 @@ export const api = {
           };
         }
       } catch (e) {
-        console.warn('[Supabase] Reports aggregation error:', e);
+        console.error('[Supabase] Reports aggregation error:', e);
+        // A configured production database is authoritative. Never replace a
+        // failed Supabase report query with legacy/local data.
+        throw e;
       }
     }
 
@@ -2078,10 +2110,9 @@ export const api = {
       deliveryTimeEstimateMins
     };
 
-    try {
-      localStorage.setItem('ccc_cached_settings', JSON.stringify(updated));
-    } catch {}
-
+    // Do not cache proposed settings before the database confirms the write.
+    // Otherwise a failed RLS/network request can leave this device showing
+    // values that were never saved for the shop.
     if (isSupabaseConfigured && supabase) {
       const dbRow = {
         id: 1,

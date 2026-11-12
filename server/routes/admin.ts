@@ -64,36 +64,21 @@ router.get('/me', requireAdminAuth, async (req: AuthenticatedRequest, res: Respo
   res.json({ success: true, admin });
 });
 
-// POST /api/admin/forgot-password
-router.post('/forgot-password', async (req: Request, res: Response) => {
-  try {
-    // Always return generic confirmation message to prevent user enumeration
-    res.json({
-      success: true,
-      message: 'If an administrator account exists for this email, a password recovery link has been sent.'
-    });
-  } catch (error) {
-    console.error('Error handling forgot-password:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
+// Local backend does not implement email-based recovery. Never allow an
+// unauthenticated request to reset a default administrator account.
+router.post('/forgot-password', (_req: Request, res: Response) => {
+  res.status(501).json({
+    success: false,
+    error: 'Secure password recovery is available only when Supabase Authentication is configured.'
+  });
 });
 
-// POST /api/admin/reset-password
-router.post('/reset-password', async (req: Request, res: Response) => {
-  try {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) {
-      res.status(400).json({ success: false, error: 'New password must be at least 6 characters' });
-      return;
-    }
-    const repo = await getDatabaseRepository();
-    // Default admin reset in local fallback
-    await repo.updateAdminPassword('admin-1', 'chandu@123', newPassword);
-    res.json({ success: true, message: 'Password updated successfully' });
-  } catch (error) {
-    console.error('Error resetting password:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
+// Recovery links must be verified by Supabase Auth before a password can be changed.
+router.post('/reset-password', (_req: Request, res: Response) => {
+  res.status(501).json({
+    success: false,
+    error: 'Password reset requires a valid Supabase Authentication recovery session.'
+  });
 });
 
 // POST /api/admin/change-password
