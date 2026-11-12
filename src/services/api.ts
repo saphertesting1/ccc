@@ -1565,34 +1565,81 @@ export const api = {
 
   async updateWeightStock(productId: string, weight: WeightUnit, inStock: boolean, price?: number): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      const { data: prod } = await supabase.from('products').select('*').eq('id', productId).single();
-      if (prod && Array.isArray(prod.weights)) {
-        const exists = prod.weights.some((w: any) => w.weight === weight);
-        const updatedWeights = exists
-          ? prod.weights.map((w: any) => {
-              if (w.weight === weight) {
-                return { ...w, inStock, ...(typeof price === 'number' ? { price: Math.max(0, price) } : {}) };
-              }
-              return w;
-            })
-          : [...prod.weights, { weight, inStock, price: typeof price === 'number' ? Math.max(0, price) : 0 }];
-        await supabase.from('products').update({ weights: updatedWeights, updated_at: new Date().toISOString() }).eq('id', productId);
+      // The products.weights JSONB field is the source of truth used by the
+      // storefront and the order-creation Edge Function. Never report success
+      // unless this primary record was actually updated.
+      const { data: prod, error: readError } = await supabase
+        .from('products')
+        .select('id, weights')
+        .eq('id', productId)
+        .maybeSingle();
+
+      if (readError) {
+        throw new Error(`Unable to load product variants: ${readError.message}`);
       }
-      try {
-        if (typeof price === 'number') {
-          await supabase.from('product_weights').upsert({
-            product_id: productId,
-            weight,
-            in_stock: inStock,
-            price: Math.max(0, price),
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'product_id,weight' });
-        } else {
-          await supabase.from('product_weights').update({ in_stock: inStock, updated_at: new Date().toISOString() }).match({ product_id: productId, weight });
+      if (!prod) {
+        throw new Error('Product not found. No stock or price changes were saved.');
+      }
+
+      let currentWeights: any = prod.weights;
+      if (typeof currentWeights === 'string') {
+        try {
+          currentWeights = JSON.parse(currentWeights);
+        } catch {
+          throw new Error('This product has invalid weight data. No changes were saved.');
         }
-      } catch {
-        // Optional table
       }
+      if (!Array.isArray(currentWeights)) {
+        throw new Error('This product has invalid weight data. No changes were saved.');
+      }
+
+      const exists = currentWeights.some((w: any) => w?.weight === weight);
+      const updatedWeights = exists
+        ? currentWeights.map((w: any) => {
+            if (w?.weight === weight) {
+              return { ...w, inStock, ...(typeof price === 'number' ? { price: Math.max(0, price) } : {}) };
+            }
+            return w;
+          })
+        : [...currentWeights, { weight, inStock, price: typeof price === 'number' ? Math.max(0, price) : 0 }];
+
+      const { data: savedProduct, error: saveError } = await supabase
+        .from('products')
+        .update({ weights: updatedWeights, updated_at: new Date().toISOString() })
+        .eq('id', productId)
+        .select('id')
+        .maybeSingle();
+
+      if (saveError) {
+        throw new Error(`Unable to save stock or price changes: ${saveError.message}`);
+      }
+      if (!savedProduct) {
+        throw new Error('No product was updated. Check administrator permissions and try again.');
+      }
+
+      // product_weights is a secondary/legacy mirror. The storefront and
+      // order validation read products.weights, so a mirror failure must not
+      // turn a successful primary update into a false failure.
+      try {
+        const mirrorResult = typeof price === 'number'
+          ? await supabase.from('product_weights').upsert({
+              product_id: productId,
+              weight,
+              in_stock: inStock,
+              price: Math.max(0, price),
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'product_id,weight' })
+          : await supabase.from('product_weights')
+              .update({ in_stock: inStock, updated_at: new Date().toISOString() })
+              .match({ product_id: productId, weight });
+
+        if (mirrorResult.error) {
+          console.warn('[Supabase] Product weight mirror could not be synchronized:', mirrorResult.error);
+        }
+      } catch (mirrorError) {
+        console.warn('[Supabase] Product weight mirror could not be synchronized:', mirrorError);
+      }
+
       notifyShopDataChanged();
       return;
     }
