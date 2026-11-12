@@ -1828,8 +1828,43 @@ export const api = {
   async getReports(params?: { startDate?: string; endDate?: string; productIds?: string[] }) {
     if (isSupabaseConfigured && supabase) {
       try {
-        const { data: rawOrders } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (rawOrders && rawOrders.length > 0) {
+        const { data: rawOrders, error: ordersError } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        if (ordersError) {
+          throw new Error(`Unable to load sales reports from Supabase: ${ordersError.message}`);
+        }
+        if (!rawOrders || rawOrders.length === 0) {
+          const todayKolkata = getKolkataDateString(new Date());
+          const startDate = params?.startDate || getKolkataDateString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+          const endDate = params?.endDate || todayKolkata;
+          return {
+            todayRevenue: 0,
+            todayOrdersCount: 0,
+            pendingOrdersCount: 0,
+            activeDeliveriesCount: 0,
+            completedOrdersCount: 0,
+            totalRevenue: 0,
+            topSellingCuts: [],
+            statusBreakdown: { New: 0, Accepted: 0, Preparing: 0, 'Ready for Dispatch': 0, 'Out for Delivery': 0, Delivered: 0, Rejected: 0, Cancelled: 0 },
+            paymentBreakdown: { Pending: 0, Paid: 0, Failed: 0, Refunded: 0 },
+            filterReport: {
+              startDate,
+              endDate,
+              totalOrdersCount: 0,
+              totalQuantitySold: 0,
+              totalWeightSoldKg: 0,
+              totalSalesValue: 0,
+              productBreakdown: [],
+              paymentBreakdown: {
+                COD: { count: 0, amount: 0 },
+                UPI: { count: 0, amount: 0, paidCount: 0, paidAmount: 0, pendingCount: 0, pendingAmount: 0 },
+                Cash: { count: 0, amount: 0 }
+              },
+              dailyBreakdown: [],
+              orderBreakdown: []
+            }
+          };
+        }
+        if (rawOrders.length > 0) {
           const allOrders: Order[] = rawOrders.map(mapDbToOrder);
 
           const todayKolkata = getKolkataDateString(new Date());
@@ -2013,7 +2048,10 @@ export const api = {
           };
         }
       } catch (e) {
-        console.warn('[Supabase] Reports aggregation error:', e);
+        console.error('[Supabase] Reports aggregation error:', e);
+        // A configured production database is authoritative. Never replace a
+        // failed Supabase report query with legacy/local data.
+        throw e;
       }
     }
 
