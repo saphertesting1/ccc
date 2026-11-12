@@ -2125,10 +2125,9 @@ export const api = {
       deliveryTimeEstimateMins
     };
 
-    try {
-      localStorage.setItem('ccc_cached_settings', JSON.stringify(updated));
-    } catch {}
-
+    // Do not cache proposed settings before the database confirms the write.
+    // Otherwise a failed RLS/network request can leave this device showing
+    // values that were never saved for the shop.
     if (isSupabaseConfigured && supabase) {
       const dbRow = {
         id: 1,
