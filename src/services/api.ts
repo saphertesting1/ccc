@@ -1317,6 +1317,10 @@ export const api = {
 
   // Admin Products - Real database creation, editing & deletion
   async saveProduct(product: Partial<Product>): Promise<Product> {
+    if (!product.name || !product.name.trim()) {
+      throw new Error('Product name is required.');
+    }
+
     const isEdit = Boolean(product.id);
     const id = product.id || `prod-${Date.now()}`;
     const slug = product.slug || (product.name ? product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : id);
@@ -1325,6 +1329,9 @@ export const api = {
       ? product.weights.filter((w: any) =>
           w &&
           ['250g', '500g', '1kg'].includes(w.weight) &&
+          w.price !== undefined &&
+          w.price !== null &&
+          String(w.price).trim() !== '' &&
           Number.isFinite(Number(w.price)) &&
           Number(w.price) >= 0
         )
