@@ -125,14 +125,9 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
         this.categories = [...initialCategories];
         this.products = [...initialProducts];
         this.settings = { ...initialShopSettings };
-        this.admins = [
-          {
-            id: 'admin-1',
-            username: 'admin',
-            role: 'super_admin',
-            passwordHash: 'chandu@123' // default admin credential for shop manager
-          }
-        ];
+        // No shared/default administrator account is created for local mode.
+        // Provision a local admin record explicitly before enabling local admin access.
+        this.admins = [];
         this.seedInitialOrders();
         this.persist();
       }
@@ -516,14 +511,6 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
         role: match.role
       };
     }
-    // Hardcoded safety for demo admin: admin / chandu@123
-    if (username.toLowerCase().trim() === 'admin' && passwordPlain.trim() === 'chandu@123') {
-      return {
-        id: 'admin-1',
-        username: 'admin',
-        role: 'super_admin'
-      };
-    }
     return null;
   }
 
@@ -532,25 +519,12 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
     if (match) {
       return { id: match.id, username: match.username, role: match.role };
     }
-    if (id === 'admin-1') {
-      return { id: 'admin-1', username: 'admin', role: 'super_admin' };
-    }
     return null;
   }
 
   async updateAdminPassword(adminId: string, currentPasswordPlain: string, newPasswordPlain: string): Promise<boolean> {
     const admin = this.admins.find(a => a.id === adminId);
     if (!admin) {
-      if (adminId === 'admin-1' && currentPasswordPlain === 'chandu@123') {
-        this.admins.push({
-          id: 'admin-1',
-          username: 'admin',
-          role: 'super_admin',
-          passwordHash: newPasswordPlain
-        });
-        this.persist();
-        return true;
-      }
       return false;
     }
     if (admin.passwordHash !== currentPasswordPlain) {
