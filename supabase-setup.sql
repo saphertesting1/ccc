@@ -418,6 +418,28 @@ END;
 $$;
 
 -- =========================================================================
+-- Only super administrators may grant, revoke, or change administrator roles.
+CREATE OR REPLACE FUNCTION public.is_super_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = public, pg_temp
+STABLE
+AS $
+  SELECT (
+    auth.uid() IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.admin_users
+      WHERE id = auth.uid()
+        AND role = 'super_admin'
+    )
+  ) OR coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'super_admin';
+$;
+
+REVOKE ALL ON FUNCTION public.is_super_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_super_admin() TO authenticated, service_role;
+
 -- 4. ROW LEVEL SECURITY (RLS) POLICIES
 -- =========================================================================
 
@@ -545,11 +567,12 @@ CREATE POLICY "Admins can view admin_users"
     USING (id = auth.uid() OR public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can manage admin_users" ON public.admin_users;
-CREATE POLICY "Admins can manage admin_users"
+DROP POLICY IF EXISTS "Super admins can manage admin_users" ON public.admin_users;
+CREATE POLICY "Super admins can manage admin_users"
     ON public.admin_users FOR ALL
     TO authenticated
-    USING (public.is_admin())
-    WITH CHECK (public.is_admin());
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
 
 -- =========================================================================
 -- 5. LEAST-PRIVILEGE ROLE PERMISSIONS (GRANTs)
