@@ -337,6 +337,52 @@ async function runTests() {
       /Unable to save stock or price changes:.*row-level security/i
     );
 
+    console.log('▶ Configured production catalogue reads never fall back to demo/local products after an RLS error');
+    let legacyCatalogueFallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/products')) {
+        return Response.json({ message: 'permission denied by row-level security', code: '42501' }, { status: 403 });
+      }
+      if (url.includes('/api/products')) {
+        legacyCatalogueFallbackCalls++;
+        return Response.json({ success: true, products: [] });
+      }
+      throw new Error(`Unexpected production catalogue request: ${url}`);
+    };
+    await assert.rejects(api.getProducts(), /Unable to load products from Supabase:.*permission denied/i);
+    assert.equal(legacyCatalogueFallbackCalls, 0);
+
+    console.log('▶ An empty Supabase catalogue remains empty instead of displaying seeded demo products');
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/products')) return Response.json([]);
+      if (url.includes('/rest/v1/categories')) return Response.json([]);
+      if (url.includes('/api/products') || url.includes('/api/categories')) {
+        legacyCatalogueFallbackCalls++;
+        return Response.json({ success: true, products: [], categories: [] });
+      }
+      throw new Error(`Unexpected empty catalogue request: ${url}`);
+    };
+    assert.deepEqual(await api.getProducts(), []);
+    assert.deepEqual(await api.getAdminProducts(), []);
+    assert.deepEqual(await api.getCategories(), []);
+    assert.equal(legacyCatalogueFallbackCalls, 0);
+
+    console.log('▶ Configured shop settings reads fail visibly instead of using stale cached settings');
+    localStorageData.set('ccc_cached_settings', JSON.stringify({ minOrderAmount: 150 }));
+    let legacySettingsFallbackCalls = 0;
+    globalThis.fetch = async input => {
+      const url = String(input);
+      if (url.includes('/rest/v1/shop_settings')) {
+        return Response.json({ message: 'permission denied by row-level security', code: '42501' }, { status: 403 });
+      }
+      if (url.includes('/api/settings')) legacySettingsFallbackCalls++;
+      throw new Error(`Unexpected production settings request: ${url}`);
+    };
+    await assert.rejects(api.getShopSettings(), /Unable to load shop settings from Supabase:.*permission denied/i);
+    assert.equal(legacySettingsFallbackCalls, 0);
+
     console.log('✅ Supabase Edge Function order persistence tests passed.');
   } finally {
     globalThis.fetch = originalFetch;
