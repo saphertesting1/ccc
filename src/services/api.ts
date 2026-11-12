@@ -17,6 +17,14 @@ import { initialCategories, initialProducts, initialShopSettings } from '../data
 
 const API_BASE = '/api';
 
+export function shouldUseStandaloneOrderApiFallback(
+  isProductionBuild: boolean,
+  supabaseConfigured: boolean,
+  supabaseClientAvailable: boolean
+): boolean {
+  return !isProductionBuild && (!supabaseConfigured || !supabaseClientAvailable);
+}
+
 function getAdminAuthHeader(): Record<string, string> {
   const token = localStorage.getItem('ccc_admin_token') || sessionStorage.getItem('ccc_admin_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -559,6 +567,14 @@ export const api = {
       }
       notifyShopDataChanged();
       return { ...mapDbToOrder(data.order), trackingToken: data.trackingToken };
+    }
+
+    if (!shouldUseStandaloneOrderApiFallback(
+      import.meta.env?.PROD === true,
+      isSupabaseConfigured,
+      Boolean(supabase)
+    )) {
+      throw new Error('Secure order service is not configured for this deployment.');
     }
 
     const settings = await this.getShopSettings();

@@ -43,9 +43,19 @@ async function runTests() {
   });
 
   try {
-    const { api } = await import('../src/services/api.js');
+    const { api, shouldUseStandaloneOrderApiFallback } = await import('../src/services/api.js');
     const { isSupabaseConfigured } = await import('../src/services/supabase.js');
     assert.equal(isSupabaseConfigured, true);
+    assert.equal(
+      shouldUseStandaloneOrderApiFallback(true, false, false),
+      false,
+      'Production builds must not fall back to the unavailable /api/orders route.'
+    );
+    assert.equal(
+      shouldUseStandaloneOrderApiFallback(false, false, false),
+      true,
+      'Local standalone development must retain its API fallback.'
+    );
 
     console.log('▶ Customer tracking links reopen without embedding tokens in order records');
     const savedCustomerOrder = {
