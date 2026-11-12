@@ -337,6 +337,12 @@ async function runTests() {
       /Unable to save stock or price changes:.*row-level security/i
     );
 
+    console.log('▶ UPI session helper never fabricates a merchant payment URI or success response');
+    await assert.rejects(
+      api.getUpiSession('test-order', 25000),
+      /UPI payments are not active yet.*Cash on Delivery/i
+    );
+
     console.log('▶ Configured production catalogue reads never fall back to demo/local products after an RLS error');
     let legacyCatalogueFallbackCalls = 0;
     globalThis.fetch = async input => {
