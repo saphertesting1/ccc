@@ -1321,19 +1321,30 @@ export const api = {
     const id = product.id || `prod-${Date.now()}`;
     const slug = product.slug || (product.name ? product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : id);
 
-    const sanitizedWeights: WeightOption[] = (Array.isArray(product.weights) && product.weights.length > 0)
-      ? product.weights
-          .filter((w: any) => w && w.weight && ['250g', '500g', '1kg'].includes(w.weight))
-          .map((w: any) => ({
-            weight: w.weight as WeightUnit,
-            price: typeof w.price === 'number' ? Math.max(0, w.price) : (Math.max(0, parseFloat(String(w.price))) || 0),
-            inStock: w.inStock !== false && w.in_stock !== false
-          }))
-      : [
-          { weight: '250g', price: 65, inStock: true },
-          { weight: '500g', price: 125, inStock: true },
-          { weight: '1kg', price: 240, inStock: true }
-        ];
+    const providedWeights = Array.isArray(product.weights)
+      ? product.weights.filter((w: any) =>
+          w &&
+          ['250g', '500g', '1kg'].includes(w.weight) &&
+          Number.isFinite(Number(w.price)) &&
+          Number(w.price) >= 0
+        )
+      : [];
+    if (providedWeights.length === 0) {
+      throw new Error('Add at least one valid weight option with a non-negative price before saving this product.');
+    }
+
+    const seenWeights = new Set<WeightUnit>();
+    const sanitizedWeights: WeightOption[] = providedWeights
+      .filter((w: any) => {
+        if (seenWeights.has(w.weight as WeightUnit)) return false;
+        seenWeights.add(w.weight as WeightUnit);
+        return true;
+      })
+      .map((w: any) => ({
+        weight: w.weight as WeightUnit,
+        price: Number(w.price),
+        inStock: w.inStock !== false && w.in_stock !== false
+      }));
 
     const fullProduct: Product = {
       id,
@@ -1460,15 +1471,20 @@ export const api = {
 
   async toggleProductStock(productId: string, isAvailable: boolean): Promise<void> {
     if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('products')
         .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
-        .eq('id', productId);
+        .eq('id', productId)
+        .select('id')
+        .maybeSingle();
       if (error) {
         if (error.message?.includes('schema cache') || error.code === 'PGRST205' || error.message?.includes('public.products')) {
           throw new Error('Supabase table "public.products" was not found in the schema cache. Please run supabase-setup.sql in Supabase SQL Editor.');
         }
         throw new Error(error.message);
+      }
+      if (!data) {
+        throw new Error('No product was updated. Check administrator permissions and try again.');
       }
       notifyShopDataChanged();
       return;
