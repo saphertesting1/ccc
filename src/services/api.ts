@@ -346,31 +346,30 @@ export const api = {
   // Public Products
   async getProducts(categoryId?: string, search?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        let query = supabase.from('products').select('*').eq('is_available', true);
-        if (categoryId && categoryId !== 'all') {
-          query = query.eq('category_id', categoryId);
-        }
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          const categories = await this.getCategories();
-          let list = data.map(r => mapDbToProduct(r, categories));
-          if (search && search.trim()) {
-            const q = search.toLowerCase().trim();
-            list = list.filter(p =>
-              p.name.toLowerCase().includes(q) ||
-              p.description.toLowerCase().includes(q) ||
-              (p.categoryName && p.categoryName.toLowerCase().includes(q))
-            );
-          }
-          return list;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch products:', e);
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('is_available', true)
+        .match(categoryId && categoryId !== 'all' ? { category_id: categoryId } : {});
+      if (error) {
+        throw new Error(`Unable to load products from Supabase: ${error.message}`);
       }
+
+      // An empty live catalogue is a valid result. Never replace it with demo
+      // products or data from the legacy backend in a configured production app.
+      const categories = await this.getCategories();
+      let list = (data || []).map(r => mapDbToProduct(r, categories));
+      if (search && search.trim()) {
+        const q = search.toLowerCase().trim();
+        list = list.filter(p =>
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q) ||
+          (p.categoryName && p.categoryName.toLowerCase().includes(q))
+        );
+      }
+      return list;
     }
 
-    // Local API with fallback
     const params = new URLSearchParams();
     if (categoryId && categoryId !== 'all') params.append('category', categoryId);
     if (search) params.append('search', search);
@@ -399,27 +398,25 @@ export const api = {
   // Admin Products (includes all active & deactivated items)
   async getAdminProducts(search?: string, categoryId?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        let query = supabase.from('products').select('*').order('created_at', { ascending: false });
-        if (categoryId && categoryId !== 'all') {
-          query = query.eq('category_id', categoryId);
-        }
-        const { data, error } = await query;
-        if (!error && data && data.length > 0) {
-          const categories = await this.getCategories();
-          let list = data.map(r => mapDbToProduct(r, categories));
-          if (search && search.trim()) {
-            const q = search.toLowerCase().trim();
-            list = list.filter(p =>
-              p.name.toLowerCase().includes(q) ||
-              p.description.toLowerCase().includes(q)
-            );
-          }
-          return list;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch admin products:', e);
+      let query = supabase.from('products').select('*').order('created_at', { ascending: false });
+      if (categoryId && categoryId !== 'all') {
+        query = query.eq('category_id', categoryId);
       }
+      const { data, error } = await query;
+      if (error) {
+        throw new Error(`Unable to load admin products from Supabase: ${error.message}`);
+      }
+
+      const categories = await this.getCategories();
+      let list = (data || []).map(r => mapDbToProduct(r, categories));
+      if (search && search.trim()) {
+        const q = search.toLowerCase().trim();
+        list = list.filter(p =>
+          p.name.toLowerCase().includes(q) ||
+          p.description.toLowerCase().includes(q)
+        );
+      }
+      return list;
     }
 
     const params = new URLSearchParams();
@@ -452,47 +449,45 @@ export const api = {
 
   async getProductById(id: string): Promise<Product> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase.from('products').select('*').eq('id', id).single();
-        if (!error && data) {
-          const categories = await this.getCategories();
-          return mapDbToProduct(data, categories);
-        }
-      } catch {
-        // fallback
+      const { data, error } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
+      if (error) {
+        throw new Error(`Unable to load product from Supabase: ${error.message}`);
       }
+      if (!data) {
+        throw new Error('This product is no longer available.');
+      }
+      const categories = await this.getCategories();
+      return mapDbToProduct(data, categories);
     }
 
-    const fallbackProduct = initialProducts.find(p => p.id === id) || initialProducts[0];
+    const fallbackProduct = initialProducts.find(p => p.id === id);
     const data = await safeFetchJson<{ success: boolean; product: Product }>(
-      `${API_BASE}/products/${id}?_t=${Date.now()}`,
+      `${API_BASE}/products/${encodeURIComponent(id)}?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, product: fallbackProduct }
+      { success: true, product: fallbackProduct as Product }
     );
-    return data.product || fallbackProduct;
+    if (!data.product && !fallbackProduct) throw new Error('Product not found.');
+    return data.product || fallbackProduct as Product;
   },
 
   // Public Categories
   async getCategories(): Promise<Category[]> {
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('categories')
-          .select('*')
-          .order('display_order', { ascending: true });
-        if (!error && data && data.length > 0) {
-          return data.map(r => ({
-            id: r.id,
-            name: r.name,
-            slug: r.slug,
-            description: r.description,
-            imageUrl: r.image_url || r.imageUrl,
-            displayOrder: r.display_order ?? r.displayOrder ?? 0
-          }));
-        }
-      } catch (e) {
-        console.warn('[Supabase] Categories query error:', e);
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('display_order', { ascending: true });
+      if (error) {
+        throw new Error(`Unable to load categories from Supabase: ${error.message}`);
       }
+      return (data || []).map(r => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        description: r.description,
+        imageUrl: r.image_url || r.imageUrl,
+        displayOrder: r.display_order ?? r.displayOrder ?? 0
+      }));
     }
 
     const data = await safeFetchJson<{ success: boolean; categories: Category[] }>(
