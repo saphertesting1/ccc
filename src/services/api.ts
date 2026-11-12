@@ -346,11 +346,11 @@ export const api = {
   // Public Products
   async getProducts(categoryId?: string, search?: string): Promise<Product[]> {
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('is_available', true)
-        .match(categoryId && categoryId !== 'all' ? { category_id: categoryId } : {});
+      let query = supabase.from('products').select('*').eq('is_available', true);
+      if (categoryId && categoryId !== 'all') {
+        query = query.eq('category_id', categoryId);
+      }
+      const { data, error } = await query;
       if (error) {
         throw new Error(`Unable to load products from Supabase: ${error.message}`);
       }
@@ -500,40 +500,33 @@ export const api = {
 
   // Public Shop Settings
   async getShopSettings(): Promise<ShopSettings> {
-    let baselineFallback = initialShopSettings;
-    try {
-      const cached = localStorage.getItem('ccc_cached_settings');
-      if (cached) {
-        baselineFallback = mapDbToSettings(JSON.parse(cached), initialShopSettings);
-      }
-    } catch {}
-
     if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('shop_settings')
-          .select('*')
-          .eq('id', 1)
-          .maybeSingle();
+      const { data, error } = await supabase
+        .from('shop_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
 
-        if (!error && data) {
-          const mapped = mapDbToSettings(data, baselineFallback);
-          try {
-            localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
-          } catch {}
-          return mapped;
-        }
-      } catch (e) {
-        console.warn('[Supabase] Failed to fetch shop_settings from database:', e);
+      if (error) {
+        throw new Error(`Unable to load shop settings from Supabase: ${error.message}`);
       }
+      if (!data) {
+        throw new Error('Shop settings are not configured in the production database.');
+      }
+
+      const mapped = mapDbToSettings(data, initialShopSettings);
+      try {
+        localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
+      } catch {}
+      return mapped;
     }
 
     const data = await safeFetchJson<{ success: boolean; settings: ShopSettings }>(
       `${API_BASE}/settings?_t=${Date.now()}`,
       { cache: 'no-store' },
-      { success: true, settings: baselineFallback }
+      { success: true, settings: initialShopSettings }
     );
-    const mapped = mapDbToSettings(data.settings, baselineFallback);
+    const mapped = mapDbToSettings(data.settings, initialShopSettings);
     try {
       localStorage.setItem('ccc_cached_settings', JSON.stringify(mapped));
     } catch {}
