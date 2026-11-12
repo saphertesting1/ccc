@@ -565,15 +565,29 @@ DROP POLICY IF EXISTS "Admins can view own admin record" ON public.admin_users;
 CREATE POLICY "Admins can view own admin record"
     ON public.admin_users FOR SELECT
     TO authenticated
-    USING (id = auth.uid() OR public.is_super_admin());
+    USING (id = (SELECT auth.uid()) OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Admins can manage admin_users" ON public.admin_users;
 DROP POLICY IF EXISTS "Super admins can manage admin_users" ON public.admin_users;
-CREATE POLICY "Super admins can manage admin_users"
-    ON public.admin_users FOR ALL
+DROP POLICY IF EXISTS "Super admins can insert admin_users" ON public.admin_users;
+DROP POLICY IF EXISTS "Super admins can update admin_users" ON public.admin_users;
+DROP POLICY IF EXISTS "Super admins can delete admin_users" ON public.admin_users;
+
+CREATE POLICY "Super admins can insert admin_users"
+    ON public.admin_users FOR INSERT
+    TO authenticated
+    WITH CHECK (public.is_super_admin());
+
+CREATE POLICY "Super admins can update admin_users"
+    ON public.admin_users FOR UPDATE
     TO authenticated
     USING (public.is_super_admin())
     WITH CHECK (public.is_super_admin());
+
+CREATE POLICY "Super admins can delete admin_users"
+    ON public.admin_users FOR DELETE
+    TO authenticated
+    USING (public.is_super_admin());
 
 -- =========================================================================
 -- 5. LEAST-PRIVILEGE ROLE PERMISSIONS (GRANTs)
