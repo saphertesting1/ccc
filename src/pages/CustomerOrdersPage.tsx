@@ -16,6 +16,7 @@ import {
 import { Order } from '../types/index.js';
 import { api } from '../services/api.js';
 import { useCart } from '../context/CartContext.js';
+import { getOrderTrackingPath, loadCustomerOrders, saveCustomerOrders } from '../services/orderTrackingStorage.js';
 
 export default function CustomerOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -32,14 +33,17 @@ export default function CustomerOrdersPage() {
   const loadLocalOrders = async () => {
     try {
       setIsLoading(true);
-      const raw = localStorage.getItem('ccc_customer_orders');
-      if (raw) {
-        const localOrderList: Order[] = JSON.parse(raw);
+      const localOrderList = loadCustomerOrders();
+      if (localOrderList.length > 0) {
         // Refresh statuses for these orders from the API while preserving customer details
         const refreshed = await Promise.all(
           localOrderList.map(async o => {
             try {
-              const live = await api.getOrder(o.orderNumber);
+              const live = await api.getOrder(
+                o.orderNumber,
+                o.trackingToken,
+                o.trackingToken ? undefined : o.customer?.phone
+              );
               // Calculate fallback subtotal & total
               const calcSub = o.items && o.items.length > 0
                 ? o.items.reduce((s, it) => s + (it.subtotal || (it.unitPrice * it.quantity)), 0)
@@ -96,17 +100,23 @@ export default function CustomerOrdersPage() {
       setIsLoading(true);
       setSearched(true);
       const remoteOrders = await api.getCustomerOrdersByPhone(cleanPhone);
-      setOrders(remoteOrders);
 
       // Merge into localStorage for future convenience
       if (remoteOrders.length > 0) {
-        const raw = localStorage.getItem('ccc_customer_orders');
-        const existing: Order[] = raw ? JSON.parse(raw) : [];
+        const existing = loadCustomerOrders();
         const existingMap = new Map(existing.map(o => [o.orderNumber, o]));
         for (const ro of remoteOrders) {
-          existingMap.set(ro.orderNumber, ro);
+          const existingOrder = existingMap.get(ro.orderNumber);
+          existingMap.set(ro.orderNumber, {
+            ...ro,
+            ...(existingOrder?.trackingToken ? { trackingToken: existingOrder.trackingToken } : {})
+          });
         }
-        localStorage.setItem('ccc_customer_orders', JSON.stringify(Array.from(existingMap.values())));
+        const mergedOrders = Array.from(existingMap.values());
+        setOrders(mergedOrders);
+        saveCustomerOrders(mergedOrders);
+      } else {
+        setOrders(remoteOrders);
       }
     } catch (e) {
       console.error('Failed to lookup orders by phone:', e);
@@ -313,7 +323,7 @@ export default function CustomerOrdersPage() {
                   </span>
 
                   <Link
-                    to={`/order-status/${encodeURIComponent(order.orderNumber)}`}
+                    to={getOrderTrackingPath(order.orderNumber, order.trackingToken)}
                     className="w-full sm:w-auto px-4 py-2 bg-[#D92332] hover:bg-[#b81d2a] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5"
                   >
                     <span>Track Live Butchering & Delivery</span>

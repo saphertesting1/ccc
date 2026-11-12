@@ -14,25 +14,19 @@ const getEnvVar = (key: string): string => {
 };
 
 const supabaseUrl = 
-  getEnvVar('VITE_SUPABASE_URL') || 
-  getEnvVar('SUPABASE_URL') || 
-  getEnvVar('NEXT_PUBLIC_SUPABASE_URL') || 
-  '';
+  getEnvVar('VITE_SUPABASE_URL');
 
-const supabaseAnonKey = 
-  getEnvVar('VITE_SUPABASE_ANON_KEY') || 
-  getEnvVar('SUPABASE_ANON_KEY') || 
-  getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY') || 
-  '';
+const supabasePublishableKey =
+  getEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY');
 
 export const isSupabaseConfigured: boolean = Boolean(
   supabaseUrl && 
-  supabaseAnonKey && 
+  supabasePublishableKey &&
   (supabaseUrl.startsWith('http://') || supabaseUrl.startsWith('https://'))
 );
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+  ? createClient(supabaseUrl, supabasePublishableKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -45,5 +39,5 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
 if (isSupabaseConfigured) {
   console.info('[Supabase] Initialized client with project URL:', supabaseUrl);
 } else {
-  console.info('[Supabase] VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY not set. Using local API / standalone store.');
+  console.info('[Supabase] VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY not set. Using local API / standalone store.');
 }

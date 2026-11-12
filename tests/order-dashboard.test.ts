@@ -6,9 +6,9 @@ async function runTests() {
     'VITE_SUPABASE_URL',
     'SUPABASE_URL',
     'NEXT_PUBLIC_SUPABASE_URL',
-    'VITE_SUPABASE_ANON_KEY',
-    'SUPABASE_ANON_KEY',
-    'NEXT_PUBLIC_SUPABASE_ANON_KEY'
+    'VITE_SUPABASE_PUBLISHABLE_KEY',
+    'SUPABASE_PUBLISHABLE_KEY',
+    'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'
   ];
   const previousEnv = new Map(supabaseEnvKeys.map(key => [key, process.env[key]]));
   const originalFetch = globalThis.fetch;
@@ -98,6 +98,15 @@ async function runTests() {
       throw new Error(`Unexpected request: ${url}`);
     };
     await assert.rejects(api.createOrder(customerOrder), /Database unavailable/);
+
+    let publicReferenceLookups = 0;
+    globalThis.fetch = async input => {
+      if (String(input).includes('/api/orders/')) publicReferenceLookups++;
+      throw new Error('Public order-number lookup must remain local only.');
+    };
+    console.log('▶ Public reference alone does not call a legacy order lookup route');
+    await assert.rejects(api.getOrder('CCC-20261110-901'), /secure tracking link|not saved in this browser/i);
+    assert.equal(publicReferenceLookups, 0);
 
     console.log('▶ Dashboard order snapshot: shared IST date filtering');
     const todayKolkata = '2026-11-10';

@@ -24,5 +24,10 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist"]
+  "exclude": [
+    "dist",
+    "supabase/functions/create-guest-order/index.ts",
+    "supabase/functions/create-admin-manual-order/index.ts",
+    "supabase/functions/track-order/index.ts"
+  ]
 }

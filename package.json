@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/shop.test.ts"
+    "test": "tsx tests/shop.test.ts && tsx tests/order-supabase.test.ts && tsx tests/order-dashboard.test.ts && tsx tests/order-functions.test.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",

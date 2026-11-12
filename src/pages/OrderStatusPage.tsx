@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, useParams, Link } from 'react-router-dom';
+import { useSearchParams, useParams, useLocation, Link } from 'react-router-dom';
 import { 
   Search, 
   Clock, 
@@ -29,24 +29,28 @@ const STATUS_STEPS: { status: OrderStatus; label: string; description: string }[
 
 export default function OrderStatusPage() {
   const { ref: pathRef } = useParams<{ ref?: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
   const searchRef = searchParams.get('ref') || '';
   const initialRef = (pathRef || searchRef || '').trim();
   const { settings } = useShop();
 
   const [query, setQuery] = useState(initialRef);
+  const [legacyPhone, setLegacyPhone] = useState('');
+  const [trackingToken, setTrackingToken] = useState('');
   const [order, setOrder] = useState<Order | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
-  const fetchOrder = useCallback(async (ref: string) => {
+  const fetchOrder = useCallback(async (ref: string, token?: string, phone?: string) => {
     if (!ref.trim()) return;
     try {
       setIsLoading(true);
       setError(null);
-      const data = await api.getOrder(ref.trim());
+      const data = await api.getOrder(ref.trim(), token, phone);
       setOrder(data);
+      setTrackingToken(token || '');
       setLastRefreshed(new Date());
     } catch (err: any) {
       setError(err.message || 'Order not found');
@@ -59,16 +63,18 @@ export default function OrderStatusPage() {
   useEffect(() => {
     const activeRef = (pathRef || searchParams.get('ref') || '').trim();
     if (activeRef) {
+      const token = new URLSearchParams(location.hash.replace(/^#/, '')).get('token') || '';
       setQuery(activeRef);
-      fetchOrder(activeRef);
+      setTrackingToken(token);
+      fetchOrder(activeRef, token || undefined);
     }
-  }, [pathRef, searchParams, fetchOrder]);
+  }, [pathRef, searchRef, location.hash, fetchOrder]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
-      setSearchParams({ ref: query.trim() });
-      fetchOrder(query.trim());
+      setTrackingToken('');
+      fetchOrder(query.trim(), undefined, legacyPhone.trim() || undefined);
     }
   };
 
@@ -96,17 +102,18 @@ export default function OrderStatusPage() {
           Track Live Order Status
         </h1>
         <p className="text-xs sm:text-sm text-stone-500">
-          Enter your Order Number (e.g. <code>CCC-20261020-001</code>) to track your fresh chicken preparation and delivery in real-time.
+            Open your secure tracking link, or enter an older order number with the phone number used at checkout.
         </p>
       </div>
 
       {/* Search Input Box */}
-      <form onSubmit={handleSearch} className="max-w-lg mx-auto flex gap-2">
+      <form onSubmit={handleSearch} className="max-w-lg mx-auto space-y-2">
+        <div className="flex gap-2">
         <div className="relative flex-1">
           <input
             type="text"
             required
-            placeholder="Enter Order # (e.g. CCC-20261020-001)"
+            placeholder="Enter order number"
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-3 bg-white border border-stone-300 rounded-xl text-xs sm:text-sm text-[#38251F] font-mono uppercase focus:outline-hidden focus:border-[#D92332] shadow-xs"
@@ -120,6 +127,15 @@ export default function OrderStatusPage() {
         >
           {isLoading ? 'Checking...' : 'Track'}
         </button>
+        </div>
+        <input
+          type="tel"
+          autoComplete="tel"
+          placeholder="Phone used for an older order"
+          value={legacyPhone}
+          onChange={event => setLegacyPhone(event.target.value)}
+          className="w-full px-3 py-2.5 bg-white border border-stone-300 rounded-xl text-xs sm:text-sm text-[#38251F] focus:outline-hidden focus:border-[#D92332]"
+        />
       </form>
 
       {/* Error state */}
@@ -159,7 +175,7 @@ export default function OrderStatusPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => fetchOrder(order.orderNumber)}
+                onClick={() => fetchOrder(order.orderNumber, trackingToken || order.trackingToken, legacyPhone.trim() || undefined)}
                 className="px-3 py-2 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-bold text-stone-700 flex items-center gap-1.5 transition-colors"
                 title="Refresh Status"
               >
