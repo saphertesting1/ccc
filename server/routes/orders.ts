@@ -175,43 +175,23 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/orders/customer/by-phone/:phone - Customer past order history
-router.get('/customer/by-phone/:phone', async (req: Request, res: Response) => {
-  try {
-    const repo = await getDatabaseRepository();
-    const phone = req.params.phone.trim();
-    const orders = await repo.getOrdersByCustomerPhone(phone);
-    res.json({ success: true, orders });
-  } catch (error) {
-    console.error('Error fetching customer orders by phone:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch customer orders' });
-  }
+// Customer history cannot be retrieved securely by phone number alone.
+// This legacy Express endpoint is disabled; production tracking uses the
+// token-protected Supabase Edge Function.
+router.get('/customer/by-phone/:phone', (_req: Request, res: Response) => {
+  res.status(501).json({
+    success: false,
+    error: 'Phone-only order history is unavailable. Use the secure tracking link provided after checkout.'
+  });
 });
 
-// GET /api/orders/:orderNumberOrId - Public live tracking
-router.get('/:orderNumberOrId', async (req: Request, res: Response) => {
-  try {
-    const repo = await getDatabaseRepository();
-    const query = req.params.orderNumberOrId.trim();
-
-    let order = await repo.getOrderByNumber(query);
-    if (!order) {
-      order = await repo.getOrderById(query);
-    }
-
-    if (!order) {
-      res.status(404).json({
-        success: false,
-        error: `Order with reference "${query}" not found. Please double-check your order number.`
-      });
-      return;
-    }
-
-    res.json({ success: true, order });
-  } catch (error) {
-    console.error('Error looking up order:', error);
-    res.status(500).json({ success: false, error: 'Failed to lookup order tracking status' });
-  }
+// Order-number-only lookup exposes customer personal information and is disabled.
+// Secure tracking is handled by the token-protected Supabase Edge Function.
+router.get('/:orderNumberOrId', (_req: Request, res: Response) => {
+  res.status(501).json({
+    success: false,
+    error: 'Public order-number lookup is disabled. Use the secure tracking link provided after checkout.'
+  });
 });
 
 export default router;
