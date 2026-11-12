@@ -25,6 +25,13 @@ GRANT EXECUTE ON FUNCTION public.is_super_admin() TO authenticated, service_role
 DROP POLICY IF EXISTS "Admins can manage admin_users" ON public.admin_users;
 DROP POLICY IF EXISTS "Super admins can manage admin_users" ON public.admin_users;
 
+DROP POLICY IF EXISTS "Admins can view admin_users" ON public.admin_users;
+DROP POLICY IF EXISTS "Admins can view own admin record" ON public.admin_users;
+CREATE POLICY "Admins can view own admin record"
+    ON public.admin_users FOR SELECT
+    TO authenticated
+    USING (id = auth.uid() OR public.is_super_admin());
+
 CREATE POLICY "Super admins can manage admin_users"
     ON public.admin_users FOR ALL
     TO authenticated
