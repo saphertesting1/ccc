@@ -63,10 +63,11 @@ npm run dev
 ```
 The server will start at `http://localhost:3000` with the Express API and Vite React frontend running together.
 
-### 3. Default Shop Admin Credentials
-- **Username:** `admin`
-- **Password:** `chandu@123`
-*(Accessible via the "Admin Login" button on the header or `/admin/login`)*
+### 3. Administrator Authentication
+- Production administrator sign-in is handled by Supabase Authentication.
+- Only users authorized in the trusted `public.admin_users` table can access the admin portal.
+- No shared/default administrator username or password is provided.
+- Local Express fallback mode does not create a default admin account or provide password recovery.
 
 ### 4. Run Automated Tests
 ```bash
