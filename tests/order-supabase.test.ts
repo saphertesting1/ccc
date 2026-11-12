@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { getOrderTrackingPath, loadCustomerOrders, saveCustomerOrders } from '../src/services/orderTrackingStorage.js';
+import { clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey } from '../src/services/checkoutIdempotency.js';
 
 async function runTests() {
   const supabaseEnvKeys = [
@@ -46,6 +47,13 @@ async function runTests() {
     const { api } = await import('../src/services/api.js');
     const { isSupabaseConfigured } = await import('../src/services/supabase.js');
     assert.equal(isSupabaseConfigured, true);
+
+    console.log('▶ Guest checkout reuses its idempotency key for an identical retry');
+    const firstCheckoutKey = getCheckoutIdempotencyKey('same-checkout-payload');
+    assert.equal(getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
+    assert.notEqual(getCheckoutIdempotencyKey('changed-checkout-payload'), firstCheckoutKey);
+    clearCheckoutIdempotencyKey();
+    assert.notEqual(getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
 
     console.log('▶ Customer tracking links reopen without embedding tokens in order records');
     const savedCustomerOrder = {
