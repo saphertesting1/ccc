@@ -24,7 +24,7 @@ export async function getCheckoutIdempotencyKey(fingerprint: string): Promise<st
         typeof saved === 'object' &&
         saved !== null &&
         'fingerprint' in saved &&
-        saved.fingerprint === fingerprint &&
+        saved.fingerprint === fingerprintHash &&
         'key' in saved &&
         typeof saved.key === 'string' &&
         saved.key.length > 0
