@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   ShieldCheck, 
@@ -22,6 +22,7 @@ import { useShop } from '../context/ShopContext.js';
 import { api } from '../services/api.js';
 import { loadCustomerOrders, saveCustomerOrders } from '../services/orderTrackingStorage.js';
 import { UpiPendingModal } from '../components/UpiPendingModal.js';
+import { clearCheckoutIdempotencyKey, getCheckoutIdempotencyKey } from '../services/checkoutIdempotency.js';
 
 export default function CheckoutPage() {
   const { cart, subtotal, deliveryFee, totalAmount, clearCart } = useCart();
@@ -114,6 +115,7 @@ export default function CheckoutPage() {
 
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (cart.length === 0) {
@@ -138,6 +140,7 @@ export default function CheckoutPage() {
 
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionInFlight.current) return;
     setErrorMessage(null);
 
     // Validation
@@ -168,6 +171,7 @@ export default function CheckoutPage() {
       return;
     }
 
+    submissionInFlight.current = true;
     try {
       setIsSubmitting(true);
 
@@ -175,31 +179,36 @@ export default function CheckoutPage() {
         ? `https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`
         : undefined;
 
+      const customer = {
+        name: name.trim(),
+        phone: cleanPhone,
+        address: address.trim(),
+        landmark: landmark.trim(),
+        notes: notes.trim(),
+        ...(coords && coordinatesConfirmed ? {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          coordinatesConfirmed: true,
+          googleMapsUrl
+        } : {})
+      };
+      const items = cart.map(item => ({
+        productId: item.productId,
+        weight: item.weight,
+        cutPreference: item.cutPreference,
+        quantity: item.quantity
+      }));
+      const paymentMethod = 'COD' as const;
+      const fingerprint = JSON.stringify({ customer, items, paymentMethod });
       const payload = {
-        customer: {
-          name: name.trim(),
-          phone: cleanPhone,
-          address: address.trim(),
-          landmark: landmark.trim(),
-          notes: notes.trim(),
-          ...(coords && coordinatesConfirmed ? {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            coordinatesConfirmed: true,
-            googleMapsUrl
-          } : {})
-        },
-        items: cart.map(item => ({
-          productId: item.productId,
-          weight: item.weight,
-          cutPreference: item.cutPreference,
-          quantity: item.quantity
-        })),
-        paymentMethod: 'COD' as const,
-        idempotencyKey: `idem-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+        customer,
+        items,
+        paymentMethod,
+        idempotencyKey: getCheckoutIdempotencyKey(fingerprint)
       };
 
       const order = await api.createOrder(payload);
+      clearCheckoutIdempotencyKey();
 
       // Persist order locally for customer orders history
       try {
@@ -239,6 +248,7 @@ export default function CheckoutPage() {
       console.error('Checkout error:', err);
       setErrorMessage(err.message || 'Failed to place order. Please try again.');
     } finally {
+      submissionInFlight.current = false;
       setIsSubmitting(false);
     }
   };
