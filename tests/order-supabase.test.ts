@@ -292,6 +292,51 @@ async function runTests() {
     await assert.rejects(api.getAdminOrders(), /Supabase/i);
     assert.equal(orderApiFallbackCalls, 0);
 
+    console.log('▶ Variant stock changes only report success after the primary product row is saved');
+    let primaryProductWrites = 0;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'GET') {
+        return Response.json({
+          id: 'prod-curry-cut',
+          weights: [
+            { weight: '250g', price: 65, inStock: true },
+            { weight: '500g', price: 125, inStock: true }
+          ]
+        });
+      }
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        primaryProductWrites++;
+        return Response.json({ id: 'prod-curry-cut' });
+      }
+      if (url.includes('/rest/v1/product_weights')) {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected variant-stock request: ${method} ${url}`);
+    };
+    await api.updateWeightStock('prod-curry-cut', '250g', false);
+    assert.equal(primaryProductWrites, 1);
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/rest/v1/products') && method === 'GET') {
+        return Response.json({
+          id: 'prod-curry-cut',
+          weights: [{ weight: '250g', price: 65, inStock: true }]
+        });
+      }
+      if (url.includes('/rest/v1/products') && method === 'PATCH') {
+        return Response.json({ message: 'new row violates row-level security policy', code: '42501' }, { status: 403 });
+      }
+      throw new Error(`Unexpected failed variant-stock request: ${method} ${url}`);
+    };
+    await assert.rejects(
+      api.updateWeightStock('prod-curry-cut', '250g', false),
+      /Unable to save stock or price changes:.*row-level security/i
+    );
+
     console.log('✅ Supabase Edge Function order persistence tests passed.');
   } finally {
     globalThis.fetch = originalFetch;
