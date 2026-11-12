@@ -802,18 +802,16 @@ export const api = {
               throw new Error(`Authorization check failed: ${adminQueryError.message}`);
             }
 
-            if (!adminRecord) {
-              // User is authenticated in Supabase Auth, but NOT in public.admin_users
+            if (!adminRecord || (adminRecord.role !== 'admin' && adminRecord.role !== 'super_admin')) {
+              // Fail closed: an authenticated user must have an explicit, valid
+              // role in the trusted administrator allow-list.
               await supabase.auth.signOut();
               throw new Error(
-                'Access denied: Your account credentials are valid, but your account is not authorized as an administrator. Please add your user UUID to the public.admin_users table.'
+                'Access denied: Your account is not authorized as an administrator. Please verify its public.admin_users record.'
               );
             }
 
-            const verifiedRole: 'admin' | 'super_admin' =
-              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
-                ? adminRecord.role
-                : 'super_admin';
+            const verifiedRole: 'admin' | 'super_admin' = adminRecord.role;
 
             const token = data.session?.access_token || `sb_${data.user.id}`;
             const adminObj: AdminUser = {
@@ -886,11 +884,8 @@ export const api = {
             .eq('id', data.user.id)
             .maybeSingle();
 
-          if (!adminErr && adminRecord) {
-            const verifiedRole: 'admin' | 'super_admin' =
-              adminRecord.role === 'admin' || adminRecord.role === 'super_admin'
-                ? adminRecord.role
-                : 'super_admin';
+          if (!adminErr && adminRecord && (adminRecord.role === 'admin' || adminRecord.role === 'super_admin')) {
+            const verifiedRole: 'admin' | 'super_admin' = adminRecord.role;
 
             return {
               id: data.user.id,
