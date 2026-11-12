@@ -763,22 +763,9 @@ export const api = {
   },
 
   // Payment Session
-  async getUpiSession(orderId: string, amountInPaise: number) {
-    try {
-      const res = await fetch(`${API_BASE}/payment/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, amountInPaise })
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // fallback
-    }
-    return {
-      success: true,
-      qrPayload: `upi://pay?pa=chanduchicken@upi&pn=ChanduChickenCenter&am=${(amountInPaise / 100).toFixed(2)}&cu=INR&tn=Order_${orderId}`,
-      sessionId: `sess_${Date.now()}`
-    };
+  async getUpiSession(_orderId: string, _amountInPaise: number) {
+    // Never fabricate a merchant UPI ID, QR payload, or successful payment session.
+    throw new Error('UPI payments are not active yet. Please choose Cash on Delivery.');
   },
 
   // Admin Authentication - Strict verification, NO hardcoded bypasses
@@ -945,46 +932,18 @@ export const api = {
       throw new Error('Please enter a valid administrator email address.');
     }
 
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const redirectTo = `${window.location.origin}/admin/reset-password`;
-        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-          redirectTo
-        });
-
-        if (error) {
-          console.warn('[Supabase] resetPasswordForEmail response:', error.message);
-          if (error.message?.toLowerCase().includes('rate limit')) {
-            throw new Error('Too many password reset requests. Please wait a few minutes before trying again.');
-          }
-        }
-
-        return {
-          success: true,
-          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
-        };
-      } catch (e: any) {
-        if (e.message?.includes('Too many password reset requests')) throw e;
-        return {
-          success: true,
-          message: 'If an administrator account exists for this email, a password recovery link has been sent. Please check your inbox and spam folder.'
-        };
-      }
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Password recovery is unavailable in local backend mode. Configure Supabase Authentication to enable secure recovery.');
     }
 
-    // Local backend fallback
-    try {
-      const res = await fetch(`${API_BASE}/admin/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { success: true, message: data.message || 'If an administrator account exists for this email, a password recovery link has been sent.' };
+    const redirectTo = `${window.location.origin}/admin/reset-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo });
+    if (error) {
+      if (error.message?.toLowerCase().includes('rate limit')) {
+        throw new Error('Too many password reset requests. Please wait a few minutes before trying again.');
       }
-    } catch {
-      // ignore
+      // Keep the response generic to avoid exposing whether an admin email exists.
+      console.warn('[Supabase] Password recovery request failed:', error.message);
     }
 
     return {
@@ -998,42 +957,24 @@ export const api = {
       throw new Error('New password must be at least 6 characters long.');
     }
 
-    if (isSupabaseConfigured && supabase) {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) {
-        throw new Error('Password reset session has expired or is invalid. Please request a new recovery link from the admin login page.');
-      }
-
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword
-      });
-
-      if (updateError) {
-        throw new Error(updateError.message || 'Failed to update password');
-      }
-
-      // Safely sign out the recovery session so admin can perform a fresh, authenticated login
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // ignore
-      }
-
-      return {
-        success: true,
-        message: 'Your administrator password has been updated successfully. You can now log in with your new password.'
-      };
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Secure password recovery requires Supabase Authentication and a valid recovery link.');
     }
 
-    // Local backend fallback
-    const res = await fetch(`${API_BASE}/admin/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newPassword })
-    });
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.error || 'Failed to update password');
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
+      throw new Error('Password reset session has expired or is invalid. Please request a new recovery link from the admin login page.');
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    if (updateError) {
+      throw new Error(updateError.message || 'Failed to update password');
+    }
+
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
     }
 
     return {
