@@ -204,7 +204,7 @@ export default function CheckoutPage() {
         customer,
         items,
         paymentMethod,
-        idempotencyKey: getCheckoutIdempotencyKey(fingerprint)
+        idempotencyKey: await getCheckoutIdempotencyKey(fingerprint)
       };
 
       const order = await api.createOrder(payload);
