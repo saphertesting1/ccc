@@ -49,11 +49,11 @@ async function runTests() {
     assert.equal(isSupabaseConfigured, true);
 
     console.log('▶ Guest checkout reuses its idempotency key for an identical retry');
-    const firstCheckoutKey = getCheckoutIdempotencyKey('same-checkout-payload');
-    assert.equal(getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
-    assert.notEqual(getCheckoutIdempotencyKey('changed-checkout-payload'), firstCheckoutKey);
+    const firstCheckoutKey = await getCheckoutIdempotencyKey('same-checkout-payload');
+    assert.equal(await getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
+    assert.notEqual(await getCheckoutIdempotencyKey('changed-checkout-payload'), firstCheckoutKey);
     clearCheckoutIdempotencyKey();
-    assert.notEqual(getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
+    assert.notEqual(await getCheckoutIdempotencyKey('same-checkout-payload'), firstCheckoutKey);
 
     console.log('▶ Customer tracking links reopen without embedding tokens in order records');
     const savedCustomerOrder = {
