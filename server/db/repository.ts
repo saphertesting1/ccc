@@ -120,7 +120,8 @@ export class MemoryDatabaseRepository implements IDatabaseRepository {
         this.products = parsed.products || initialProducts;
         this.orders = parsed.orders || [];
         this.settings = parsed.settings || initialShopSettings;
-        this.admins = parsed.admins || [];
+        // Remove the legacy seeded local admin account from existing data files.
+        this.admins = (parsed.admins || []).filter((admin: any) => !(admin?.id === 'admin-1' && admin?.username?.toLowerCase() === 'admin'));
       } else {
         this.categories = [...initialCategories];
         this.products = [...initialProducts];
