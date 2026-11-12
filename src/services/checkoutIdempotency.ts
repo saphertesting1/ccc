@@ -13,7 +13,9 @@ function createKey(): string {
  * This allows the database's unique idempotency_key constraint to prevent
  * duplicate orders after a timeout or lost response.
  */
-export function getCheckoutIdempotencyKey(fingerprint: string): string {
+export async function getCheckoutIdempotencyKey(fingerprint: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprint));
+  const fingerprintHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -32,7 +34,7 @@ export function getCheckoutIdempotencyKey(fingerprint: string): string {
     }
 
     const key = createKey();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ fingerprint, key }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ fingerprint: fingerprintHash, key }));
     return key;
   } catch {
     // Storage may be unavailable in private browsing or embedded webviews.
