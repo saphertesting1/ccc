@@ -425,7 +425,7 @@ LANGUAGE SQL
 SECURITY DEFINER
 SET search_path = public, pg_temp
 STABLE
-AS $
+AS $function$
   SELECT (
     auth.uid() IS NOT NULL
     AND EXISTS (
@@ -435,7 +435,7 @@ AS $
         AND role = 'super_admin'
     )
   ) OR coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'super_admin';
-$;
+$function$;
 
 REVOKE ALL ON FUNCTION public.is_super_admin() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_super_admin() TO authenticated, service_role;
