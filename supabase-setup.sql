@@ -561,10 +561,11 @@ CREATE POLICY "Admins can delete orders"
 
 -- 6. Admin Users Table Policies
 DROP POLICY IF EXISTS "Admins can view admin_users" ON public.admin_users;
-CREATE POLICY "Admins can view admin_users"
+DROP POLICY IF EXISTS "Admins can view own admin record" ON public.admin_users;
+CREATE POLICY "Admins can view own admin record"
     ON public.admin_users FOR SELECT
     TO authenticated
-    USING (id = auth.uid() OR public.is_admin());
+    USING (id = auth.uid() OR public.is_super_admin());
 
 DROP POLICY IF EXISTS "Admins can manage admin_users" ON public.admin_users;
 DROP POLICY IF EXISTS "Super admins can manage admin_users" ON public.admin_users;
